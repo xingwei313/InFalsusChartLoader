@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.37531.7 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InFalsusChartLoader", "InFalsusChartLoader.csproj", "{BBAFC700-1F14-450C-8F50-DA5E920238D1}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{BBAFC700-1F14-450C-8F50-DA5E920238D1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BBAFC700-1F14-450C-8F50-DA5E920238D1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BBAFC700-1F14-450C-8F50-DA5E920238D1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BBAFC700-1F14-450C-8F50-DA5E920238D1}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {507A0FC2-23A4-4408-A18D-C5F998C4419C}
+	EndGlobalSection
+EndGlobal

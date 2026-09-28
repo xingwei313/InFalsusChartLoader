@@ -1,0 +1,12 @@
+bin/
+obj/
+
+.vs/
+
+Managed/*
+!Managed/MelonLoader.dll
+!Managed/Il2CppInterop.Runtime.dll
+!Managed/Il2CppInterop.Common.dll
+!Managed/Il2Cppmscorlib.dll
+!Managed/Newtonsoft.Json.dll
+!Managed/UnityEngine.CoreModule.dll

@@ -1,0 +1,95 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <RootNamespace>InFalsusChartLoader</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <AssemblyName>InFalsusChartLoader</AssemblyName>
+
+    <!-- The DLL's identity. NOT what MelonLoader displays; that is the MelonInfo attribute in
+         Source/Mod/ChartLoaderMod.cs. Keep the two in step by hand. -->
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+  </PropertyGroup>
+
+  <!-- The SDK would add six more assembly attributes: Company, Configuration, FileVersion,
+       InformationalVersion, Product, Title. Nothing reads any of them. Leaving them off keeps six
+       TypeRefs, six MemberRefs and their version strings out of every Release build. -->
+  <PropertyGroup>
+    <GenerateAssemblyCompanyAttribute>false</GenerateAssemblyCompanyAttribute>
+    <GenerateAssemblyConfigurationAttribute>false</GenerateAssemblyConfigurationAttribute>
+    <GenerateAssemblyFileVersionAttribute>false</GenerateAssemblyFileVersionAttribute>
+    <GenerateAssemblyInformationalVersionAttribute>false</GenerateAssemblyInformationalVersionAttribute>
+    <GenerateAssemblyProductAttribute>false</GenerateAssemblyProductAttribute>
+    <GenerateAssemblyTitleAttribute>false</GenerateAssemblyTitleAttribute>
+  </PropertyGroup>
+
+  <!-- NativeHook / ldftn / function pointers. -->
+  <PropertyGroup>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    <PlatformTarget>x64</PlatformTarget>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <!-- Release is the build that gets installed, so it carries no symbols. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Source\**\*.cs" />
+
+    <!-- The probes are not in a Release build at all: not the calls, not the helpers, not the
+         strings. Their call sites are wrapped in `#if DEBUG`, so THIS REMOVAL AND THOSE GUARDS HAVE
+         TO STAY IN STEP. build.bat asserts the result after every Release build. -->
+    <Compile Remove="Source\Probe\**\*.cs" Condition="'$(Configuration)' == 'Release'" />
+  </ItemGroup>
+
+  <!-- Build references. All live in Managed/ and all are committed, so a clone builds with nothing
+       else to do; after a game update the Cpp2IL ones need refreshing (README).
+
+       Plain <Reference> rather than <PackageReference> on purpose: a package reference pulls
+       MelonLoader's whole dependency graph in behind it, which writes a 65 KB .deps.json next to a
+       40 KB mod for MelonLoader's load context to read. Only the assembly is wanted. -->
+  <ItemGroup>
+    <Reference Include="MelonLoader">
+      <HintPath>Managed\MelonLoader.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Il2CppInterop.Runtime">
+      <HintPath>Managed\Il2CppInterop.Runtime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Il2CppInterop.Common">
+      <HintPath>Managed\Il2CppInterop.Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- Il2CppSystem.Type comes back from the generated-type lookups, and UnityEngine.CoreModule
+         carries Texture2D / ImageConversion for the custom jackets. The alias keeps this mod's
+         own types unambiguous against the interop ones. -->
+    <Reference Include="Il2Cppmscorlib">
+      <HintPath>Managed\Il2Cppmscorlib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- The `if` file is JSON and is read as JSON, so a real parser decides what is malformed
+         rather than a hand-rolled reader that agrees with the one shape it was written against.
+         This is the same assembly MelonLoader itself loads at runtime, so nothing new is dragged
+         in: Managed\Newtonsoft.Json.dll is byte-identical to R\MelonLoader\net6\Newtonsoft.Json.dll. -->
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>Managed\Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>Managed\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+      <Aliases>UnityEngineCore</Aliases>
+    </Reference>
+  </ItemGroup>
+</Project>
