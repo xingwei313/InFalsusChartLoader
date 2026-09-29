@@ -68,7 +68,7 @@ namespace InFalsusChartLoader
             _apply.Attach();
             _applyTramp = _apply.Trampoline;
             Diagnostics.Info("SongSelectScene._MN hooked");
-            return Landed("SongSelectScene._MN", target, prologue);
+            return Landed(Hook.SongSelectApply, target, prologue);
         }
 
         private static void DetachSongSelect()
@@ -127,7 +127,7 @@ namespace InFalsusChartLoader
                 }
                 catch (Exception e)
                 {
-                    Fault("SongSelectScene._MN", e);
+                    Fault(Hook.SongSelectApply, e);
                 }
             }
 

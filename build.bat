@@ -60,7 +60,7 @@ set "PS=$ErrorActionPreference='Stop';"
 set "PS=%PS% $p='bin\%CONFIG%\InFalsusChartLoader.dll';"
 set "PS=%PS% if(-not (Test-Path $p)){ Write-Host ('No artifact at '+$p); exit 1 };"
 set "PS=%PS% $b=[IO.File]::ReadAllBytes($p); $fail=0;"
-set "PS=%PS% $bad=@('charts folder: ','decoded ','streaming assets: ','interop types by name',' hooked','could not be resolved','note records measure','chart folder ','the pack list has','is not an array','has no element class','class pointer could not be read','probe: ','--- before ---','--- after ---','charts folder exists?','kept ','packToAssets    ','readings=','chart[0]','audio name ','audio read index ','is not ours','jacket asked for','jacket load claimed','read bookkeeping reached','outstanding-read sets','outstanding=','noread=','a call into the game','s rendering types raised','is missing');"
+set "PS=%PS% $bad=@('charts folder: ','decoded ','streaming assets: ','interop types by name',' hooked','could not be resolved','note records measure','chart folder ','the pack list has','is not an array','has no element class','class pointer could not be read','probe: ','--- before ---','--- after ---','charts folder exists?','kept ','packToAssets    ','readings=','chart[0]','audio name ','audio read index ','is not ours','jacket asked for','jacket load claimed','read bookkeeping reached','outstanding-read sets','outstanding=','noread=','a call into the game','s rendering types raised','is missing','pack screen');"
 set "PS=%PS% $good=@('InFalsusChartLoader loading...','charts: ','offsets agreed=','hooks installed','GameAssembly.dll','is already the name of a song this game');"
 set "PS=%PS% foreach($s in $bad){ $n=[Text.Encoding]::Unicode.GetBytes($s); $h=0;"
 set "PS=%PS%   for($i=0;$i -le $b.Length-$n.Length;$i++){ $ok=$true;"
@@ -74,6 +74,45 @@ set "PS=%PS%     for($j=0;$j -lt $n.Length;$j++){ if($b[$i+$j] -ne $n[$j]){ $ok=
 set "PS=%PS%     if($ok){ $h++ } };"
 set "PS=%PS%   if($h -eq 0){ Write-Host ('  FAIL  '+$s+'   missing'); $fail=1 }"
 set "PS=%PS%   else { Write-Host ('  ok    '+$s+'   '+$h) } };"
+
+rem ---------------------------------------------------------------------------
+rem The two lists above are what somebody thought of. This one is not a list of
+rem things to look for: it takes every UTF-16 literal of 12 characters or more
+rem out of the artifact, and every one of them has to be on the list below. A
+rem new diagnostic therefore cannot ship without someone deciding it should -
+rem which is the case a phrase list cannot catch, and one such string lived in a
+rem release for three rounds that way (an argument to a helper that returns a
+rem value, and so cannot be [Conditional]).
+rem
+rem Both byte offsets are scanned, not one: a UTF-16 literal can start at an odd
+rem offset and a single stride-2 pass misses every string stored that way.
+rem
+rem The high byte is multiplied rather than shifted, and that is not style: in
+rem Windows PowerShell a byte shifted by a byte stays a byte, so 0x68 -shl 8 is
+rem 0 - the scan then reads the file one byte at a time, calls every printable
+rem byte a character of its own, and reports the PE header as a string. The
+rem first version of this check did exactly that.
+rem
+rem What it reads is the string heap - the UTF-16 literals a release can reach.
+rem Metadata names (an enum member's, say) are UTF-8 and are not diagnostics.
+rem
+rem When it fails, decide which kind it is. A diagnostic that should not ship is
+rem a bug in the code, not a line to add here. A name that a shipping message
+rem needs, or one of the framework's or the version resource's own, belongs on
+rem the list. The entries below are, in order: the shipping log lines (Load and
+rem Error), the names the interop lookups pass (a method resolver ships too, so
+rem its arguments do), the localisation and shader names the game is asked for,
+rem and the version resource the SDK writes.
+rem ---------------------------------------------------------------------------
+set "PS=%PS% $str=New-Object 'System.Collections.Generic.HashSet[string]';"
+set "PS=%PS% foreach($o in 0,1){ $c=New-Object System.Text.StringBuilder; for($i=$o;$i -lt $b.Length-1;$i+=2){ $n=$b[$i] + ($b[$i+1] * 256);"
+set "PS=%PS%   if($n -ge 32 -and $n -lt 127){ [void]$c.Append([char]$n) } else { if($c.Length -ge 12){ [void]$str.Add($c.ToString()) }; [void]$c.Clear() } }"
+set "PS=%PS%   if($c.Length -ge 12){ [void]$str.Add($c.ToString()) } };"
+set "PS=%PS% $allow=@(' could not be read: ',' has filter ',' hooks installed',' unresolved=',''' difficulty ',''' is already the name of a song this game ',''' was left out: ',''' was not loaded. Change the id ','<exception could not be read: ','<exception whose class could not be named>','<exception with no class>','AddressableHandleAutoReleaser','AddressableHandleAutoReleaser._MIA could not be found; custom jackets will not be substituted onto the song list','Assembly Version','FileDescription','Game.Common.dll','GameAssembly.dll','GameplayBackgrounds','InFalsusChartLoader loading...','InFalsusChartLoader.dll','InternalName','LegalCopyright','MakeGenericMethod','NativeClassPtr','NativeFieldInfoPtr_','OriginalFilename','PackSongCardMember','PackVisualMemberLarge','ProductVersion','SongData could not be found; the new songs will not show','SongData._yOA could not be found; the new songs will not show','SongSelectScene','Sprites/Default','StringFileInfo','StringTypeMapping','SupportsTextureFormat','TextureFormat','UnityEngine.','UnityEngine.CoreModule','UnityEngine.CoreModule.dll','Unlit/Texture','VS_VERSION_INFO','chart loading failed: ','detour faulted, custom charts disabled: ','ifapp.Game.Common','ifapp.Game.Scenes','in its if file.','no custom song could be filed under its name','no custom song could have its audio registered','no zlib data','offsets agreed=','preview_seconds','registering the custom songs failed: ','set_mainTexture','the custom songs could not be added to the game''s song list','the game''s asset manager could not be reached; no custom audio can be registered, so no custom song can be played','the game''s asset manager would not take another file','the game''s chart decoder could not be reached; no charts will load','the game''s song list refresh raised: ');"
+set "PS=%PS% $arr=@($str); [Array]::Sort($arr); $off=0;"
+set "PS=%PS% foreach($s in $arr){ if($allow -notcontains $s){ Write-Host ('  OFF-LIST  '+$s); $off++ } };"
+set "PS=%PS% if($off -ne 0){ Write-Host ('  '+$off+' literal(s) in the artifact are on no list - a release should carry none of them.'); $fail=1 }"
+set "PS=%PS% else { Write-Host ('  ok    all '+$str.Count+' literal(s) of 12+ characters are accounted for') };"
 set "PS=%PS% if($fail -ne 0){ Write-Host 'The Release artifact carries a diagnostic string, or is missing one it should have.'; exit 1 };"
 set "PS=%PS% Write-Host 'Passed: the Release build carries the function only.';"
 

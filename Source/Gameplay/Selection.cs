@@ -145,7 +145,7 @@ namespace InFalsusChartLoader
         private static ushort _appliedSong;
 
         /// <summary>
-        /// The selection `_MN` was last called with, 0..3, or -1 before the first one.
+        /// The difficulty the game last applied, 0..3, or -1 before the first one.
         ///
         /// <para>
         /// This is the argument of the call that leads to a picture being asked for, so it is both
@@ -155,6 +155,12 @@ namespace InFalsusChartLoader
         /// that was played, which is a different difficulty the moment the player switches; and the
         /// scene field has the right value but sits behind a live scene pointer, which is the thing
         /// that is not yet available on the screen's first draw.
+        /// </para>
+        /// <para>
+        /// Written by both screens that apply one — the song select through `_MN`, which also names
+        /// the song, and the pack screen through `PackVisualMemberLarge._vc`, where there is no song
+        /// and each card carries its own. Whichever applied last is the answer, which is what "the
+        /// difficulty the game is on" means when the two screens disagree for a moment.
         /// </para>
         /// <para>
         /// Called before the game's own body runs, which is what makes it usable by the pictures
@@ -174,12 +180,9 @@ namespace InFalsusChartLoader
         /// </summary>
         internal static bool Applying(IntPtr scene, ushort songId, byte difficultyFlag)
         {
-            int index = IndexOf(difficultyFlag);
-            if (index < 0) return false;   // not one of the four: whatever was applied last stands
+            if (IndexOf(difficultyFlag) < 0) return false;   // not one of the four: whatever was applied last stands
 
-            bool changed = index != _applied;
-
-            _applied = index;
+            bool changed = ApplyingDifficulty(difficultyFlag);
             _appliedSong = songId;
 
             // The scene as well, so the fallback below has an instance to check against: the other
@@ -187,6 +190,26 @@ namespace InFalsusChartLoader
             // that had nothing to read.
             if (Memory.LooksLikeObject(scene)) Hooks.SongSelect = scene;
 
+            return changed;
+        }
+
+        /// <summary>
+        /// Records a difficulty the game is applying, wherever it is applying one, and answers whether
+        /// it is a different one from the last.
+        ///
+        /// The pack screen goes through here too, and it has no song to record beside it: its cards
+        /// each carry their own difficulty, so the only thing the pictures need from that screen is
+        /// which one is in force. Both callers get the same answer to "did this change?", which each
+        /// of them uses for its own reload — the song select's picture gate, and the pack screen's
+        /// cards, which the game does not rebuild by itself.
+        /// </summary>
+        internal static bool ApplyingDifficulty(byte difficultyFlag)
+        {
+            int index = IndexOf(difficultyFlag);
+            if (index < 0) return false;   // not one of the four: whatever was applied last stands
+
+            bool changed = index != _applied;
+            _applied = index;
             return changed;
         }
 

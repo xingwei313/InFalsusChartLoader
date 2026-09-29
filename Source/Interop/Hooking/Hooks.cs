@@ -14,13 +14,15 @@ namespace InFalsusChartLoader
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Twelve detours, installed by seven functions. Eight of them exist because a custom song needs
+    /// Thirteen detours, installed by eight functions. Eight of them exist because a custom song needs
     /// the game to accept something it has no path for — a name it will look up, a byte range it
     /// will read, a picture it cannot reach. Each of those answers, and each is on a hot path, so
     /// each stays thin. Three more answer nothing: they count and report, because whether the game
     /// took each step cannot be read off the decompilation with confidence and one number per step
-    /// settles it. The twelfth does neither — it changes one field around a call the game is making,
-    /// so that a difficulty change reaches the pictures the way a song change does.
+    /// settles it. The last two do neither — each changes what the game does around a call it is
+    /// making, so that a difficulty change reaches the pictures. One widens the song-select's own
+    /// reload to include a difficulty change; the other rebuilds the pack screen's cards, which that
+    /// screen never asks the game to rebuild.
     /// </para>
     /// <list type="bullet">
     /// <item><description>
@@ -58,13 +60,20 @@ namespace InFalsusChartLoader
     /// apart from the outside was the whole of a round of work.
     /// </description></item>
     /// <item><description>
-    /// <b>`SongSelectScene._MN`</b> — the selection being applied, and the one hook that neither
-    /// answers nor counts for the game's sake. Two things are wrong with the pictures that a
-    /// difficulty change has to reach, and both are answered from here: it is the only place where
-    /// the difficulty is known while it is being applied (the song-select background asks for its
-    /// picture <i>before</i> the hook that records the scene has run), and the game reloads those
-    /// pictures only on a song change, which this widens to include a difficulty change. See
-    /// <see cref="Selection"/> and <c>SongSelectHook</c>.
+    /// <b>`SongSelectScene._MN`</b> — the selection being applied, on the screen where a picture is
+    /// asked for by song. Two things are wrong with the pictures that a difficulty change has to
+    /// reach, and both are answered from here: it is the only place where the difficulty is known
+    /// while it is being applied (the song-select background asks for its picture <i>before</i> the
+    /// hook that records the scene has run), and the game reloads those pictures only on a song
+    /// change, which this widens to include a difficulty change. See <see cref="Selection"/> and
+    /// <c>SongSelectHook</c>.
+    /// </description></item>
+    /// <item><description>
+    /// <b>`PackVisualMemberLarge._vc`</b> — the same problem on the pack screen, where a picture is
+    /// asked for by song but the screen has no difficulty of its own to answer with, and where the
+    /// game does not re-ask at all when the difficulty changes. The difficulty is taken from this
+    /// call, and the cards are rebuilt through the game's own card builder when it moves. See
+    /// <c>PackVisualHook</c>.
     /// </description></item>
     /// <item><description>
     /// <b>The song-select's card builder</b> — the odd one out: it counts the cards the list is
@@ -138,6 +147,7 @@ namespace InFalsusChartLoader
             Count(InstallJacket());
             Count(InstallSongCard());
             Count(InstallSongSelect());
+            Count(InstallPackVisual());
             Count(InstallPlayGate());
             Count(InstallSceneSwitch());
 
@@ -153,6 +163,7 @@ namespace InFalsusChartLoader
         {
             DetachSceneSwitch();
             DetachPlayGate();
+            DetachPackVisual();
             DetachSongSelect();
             DetachSongCard();
             DetachJacket();
@@ -191,29 +202,113 @@ namespace InFalsusChartLoader
         }
 
         /// <summary>
+        /// A hook, named for the one place a name is needed: a detour that did not land.
+        ///
+        /// An enum rather than the string it replaced, and that is about what a Release build carries.
+        /// The name is an argument to <see cref="Landed"/>, which answers with the installer's return
+        /// value and therefore cannot be `[Conditional("DEBUG")]` — and an argument to a method that
+        /// ships is a string that ships. Thirteen of these names were in every Release build, readable
+        /// by nothing in it. They now live in <see cref="Name"/>, which that build does not compile.
+        /// </summary>
+        internal enum Hook
+        {
+            ChartLoader,
+            AudioRead,
+            AudioName,
+            JacketReference,
+            JacketMaterial,
+            ChartReference,
+            ChartMaterial,
+            Background,
+            SongCard,
+            SongSelectApply,
+            PackVisual,
+            PlayGate,
+            SceneSwitch,
+        }
+
+        /// <summary>
         /// Whether a detour landed, reported by name when it did not.
         ///
         /// The answer becomes the installer's return value, which is what the `n/m hooks installed`
         /// line is built from — and that line is in every build, so a hook that was attached and did
         /// not take reads as a count, not as an absence nobody can see.
         /// </summary>
-        private static bool Landed(string what, IntPtr target, byte[] prologue)
+        private static bool Landed(Hook hook, IntPtr target, byte[] prologue)
         {
             if (Patched(target, prologue)) return true;
 
-            Diagnostics.Warn($"{what} was attached but its first bytes are unchanged; the detour is " +
-                             "not in place, and whatever it answers for will silently do nothing");
+            NotLanded(hook);
             return false;
         }
 
-        /// <summary>Reports a detour fault once, then stops calling into the mod.</summary>
-        private static void Fault(string where, Exception e)
+        /// <summary>
+        /// Says which hook did not take.
+        ///
+        /// The body is guarded, not just the call site: a `[Conditional]` method is still compiled in
+        /// a build where its calls are removed, so a name rendered outside `#if DEBUG` would be a
+        /// string in the Release build in exactly the way <see cref="Hook"/> exists to avoid.
+        /// </summary>
+        [System.Diagnostics.Conditional("DEBUG")]
+        private static void NotLanded(Hook hook)
+        {
+#if DEBUG
+            Diagnostics.Warn($"{Name(hook)} was attached but its first bytes are unchanged; the detour " +
+                             "is not in place, and whatever it answers for will silently do nothing");
+#endif
+        }
+
+#if DEBUG
+        /// <summary>The hooks by name, for the log. Debug only — see <see cref="Hook"/>.</summary>
+        private static string Name(Hook hook) => hook switch
+        {
+            Hook.ChartLoader => "_s._VA",
+            Hook.AudioRead => "_J._hF._ZgA",
+            Hook.AudioName => "_BG._DJA",
+            Hook.JacketReference => "_apA",
+            Hook.JacketMaterial => "_MIA",
+            Hook.ChartReference => "SongData._ZOA",
+            Hook.ChartMaterial => "AddressableHandleAutoReleaser._LIA",
+            Hook.Background => "GameplayBackgrounds._UmA",
+            Hook.SongCard => "the song card builder",
+            Hook.SongSelectApply => "SongSelectScene._MN",
+            Hook.PackVisual => "PackVisualMemberLarge._vc",
+            Hook.PlayGate => "SongSelectScene._sN",
+            Hook.SceneSwitch => "CoreScene._CB.MoveNext",
+            _ => "(unknown hook)",
+        };
+#endif
+
+        /// <summary>
+        /// Reports a detour fault once, then stops calling into the mod.
+        ///
+        /// The hook is named on the line only in a Debug build, and the article standing in for the
+        /// name in a Release one is why the sentence still reads: a release says <i>a</i> detour
+        /// faulted, which is what the person reading it has to act on, and which one it was is a
+        /// question for a build that can answer it. A <see cref="Hook"/> rather than the string this
+        /// took, for the reason the enum exists — this was the third member of that family, and the
+        /// one the first pass over it missed.
+        /// </summary>
+        private static void Fault(Hook hook, Exception e)
         {
             Faulted = true;
             Faults++;
 
             if (Faults > 1) return;
-            Diagnostics.Error($"{where} detour faulted, custom charts disabled: {Diagnostics.Describe(e)}");
+            Diagnostics.Error($"{Which(hook)}detour faulted, custom charts disabled: {Diagnostics.Describe(e)}");
+        }
+
+        /// <summary>
+        /// What the fault line calls the hook: its name in a Debug build, and the article the sentence
+        /// needs in a Release one. See <see cref="Fault"/> and <see cref="Name"/>.
+        /// </summary>
+        private static string Which(Hook hook)
+        {
+#if DEBUG
+            return Name(hook) + " ";
+#else
+            return "a ";
+#endif
         }
     }
 }

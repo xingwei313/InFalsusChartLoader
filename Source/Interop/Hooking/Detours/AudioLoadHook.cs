@@ -81,7 +81,7 @@ namespace InFalsusChartLoader
             _dja.Attach();
             _djaTramp = _dja.Trampoline;
             Diagnostics.Info("_BG._DJA hooked");
-            return Landed("_J._hF._ZgA", zgA, zgAPrologue) & Landed("_BG._DJA", dja, djaPrologue);
+            return Landed(Hook.AudioRead, zgA, zgAPrologue) & Landed(Hook.AudioName, dja, djaPrologue);
         }
 
         private static void DetachAudioLoad()
@@ -117,7 +117,7 @@ namespace InFalsusChartLoader
                 }
                 catch (Exception e)
                 {
-                    Fault("_J._hF._ZgA", e);
+                    Fault(Hook.AudioRead, e);
                 }
             }
 
@@ -143,7 +143,7 @@ namespace InFalsusChartLoader
                 }
                 catch (Exception e)
                 {
-                    Fault("_BG._DJA", e);
+                    Fault(Hook.AudioName, e);
                 }
             }
 

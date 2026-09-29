@@ -202,8 +202,8 @@ namespace InFalsusChartLoader
             _miaTramp = _mia.Trampoline;
             Diagnostics.Info("AddressableHandleAutoReleaser._MIA hooked");
 
-            bool ok = Landed("_apA", reference, referencePrologue);
-            ok &= Landed("_MIA", load, loadPrologue);
+            bool ok = Landed(Hook.JacketReference, reference, referencePrologue);
+            ok &= Landed(Hook.JacketMaterial, load, loadPrologue);
 
             // 另外两条。少了它们，只有选曲卡片有图、别的界面都退回游戏的兜底 —— 这正是被发现
             // 时的形状：选曲界面有曲绘，加载界面没有。曲绘不是一个入口，是 2×2：
@@ -245,7 +245,7 @@ namespace InFalsusChartLoader
             _uma.Attach();
             _umaTramp = _uma.Trampoline;
             Diagnostics.Info("GameplayBackgrounds._UmA hooked");
-            return Landed("GameplayBackgrounds._UmA", target, prologue);
+            return Landed(Hook.Background, target, prologue);
         }
 
         /// <summary>
@@ -270,7 +270,7 @@ namespace InFalsusChartLoader
             _zoa.Attach();
             _zoaTramp = _zoa.Trampoline;
             Diagnostics.Info("SongData._ZOA hooked");
-            return Landed("SongData._ZOA", target, prologue);
+            return Landed(Hook.ChartReference, target, prologue);
         }
 
         /// <summary>`AddressableHandleAutoReleaser._LIA&lt;T&gt;` —— 两个加载器里的阻塞那个。</summary>
@@ -294,7 +294,7 @@ namespace InFalsusChartLoader
             _lia.Attach();
             _liaTramp = _lia.Trampoline;
             Diagnostics.Info("AddressableHandleAutoReleaser._LIA hooked");
-            return Landed("AddressableHandleAutoReleaser._LIA", target, prologue);
+            return Landed(Hook.ChartMaterial, target, prologue);
         }
 
         private static void DetachJacket()
@@ -348,7 +348,7 @@ namespace InFalsusChartLoader
                 catch (Exception e)
                 {
                     JacketCatalog.Disarm();
-                    Fault("SongData._apA", e);
+                    Fault(Hook.JacketReference, e);
                 }
             }
 
@@ -373,7 +373,7 @@ namespace InFalsusChartLoader
                 }
                 catch (Exception e)
                 {
-                    Fault("AddressableHandleAutoReleaser._MIA", e);
+                    Fault(Hook.JacketMaterial, e);
                 }
             }
 
@@ -406,7 +406,7 @@ namespace InFalsusChartLoader
                 catch (Exception e)
                 {
                     JacketCatalog.Disarm();
-                    Fault("SongData._ZOA", e);
+                    Fault(Hook.ChartReference, e);
                 }
             }
 
@@ -429,7 +429,7 @@ namespace InFalsusChartLoader
                 }
                 catch (Exception e)
                 {
-                    Fault("AddressableHandleAutoReleaser._LIA", e);
+                    Fault(Hook.ChartMaterial, e);
                 }
             }
 
@@ -463,7 +463,7 @@ namespace InFalsusChartLoader
                 catch (Exception e)
                 {
                     JacketCatalog.Disarm();
-                    Fault("GameplayBackgrounds._UmA", e);
+                    Fault(Hook.Background, e);
                 }
             }
 

@@ -56,7 +56,7 @@ namespace InFalsusChartLoader
             _card.Attach();
             _cardTramp = _card.Trampoline;
             Diagnostics.Info("song card builder hooked");
-            return Landed("the song card builder", target, prologue);
+            return Landed(Hook.SongCard, target, prologue);
         }
 
         private static void DetachSongCard()
@@ -119,7 +119,7 @@ namespace InFalsusChartLoader
             _gate.Attach();
             _gateTramp = _gate.Trampoline;
             Diagnostics.Info("SongSelectScene._sN hooked");
-            return Landed("SongSelectScene._sN", target, prologue);
+            return Landed(Hook.PlayGate, target, prologue);
         }
 
         private static void DetachPlayGate()
@@ -233,7 +233,7 @@ namespace InFalsusChartLoader
             _moveNext.Attach();
             _moveNextTramp = _moveNext.Trampoline;
             Diagnostics.Info("CoreScene._CB.MoveNext hooked");
-            return Landed("CoreScene._CB.MoveNext", target, prologue);
+            return Landed(Hook.SceneSwitch, target, prologue);
         }
 
         private static void DetachSceneSwitch()

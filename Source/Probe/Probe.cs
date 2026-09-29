@@ -143,8 +143,14 @@ namespace InFalsusChartLoader
             // reload the game would not have done by itself. `askedNoPicture` above is the other
             // half: it counts the times a jacket was asked for and the difficulty could not be told,
             // which is what an empty background on a song with one picture per difficulty looks like.
+            //
+            // `pack` is the same pair for the pack screen: how often a difficulty was applied there,
+            // and how many cards were rebuilt because of one. The second number stays at zero while
+            // no difficulty changes on that screen, which is what says the rebuild is not running
+            // when it has nothing to do.
             $"apply={Hooks.ApplyCalls}/{Hooks.ApplyReloaded} " +
             $"diff={Selection.AppliedDifficulty} song={Selection.AppliedSong} " +
+            $"pack={Hooks.PackDifficultyCalls}/{Hooks.PackCardsRebuilt} " +
             $"switch={Hooks.SceneSwitchCalls}@{Hooks.SceneSwitchLastState}" +
             // What the scene switch is parked on, when it is parked on something. This is the field
             // that separates a stall from a frame loop in one glance.

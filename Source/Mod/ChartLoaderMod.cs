@@ -23,13 +23,13 @@ namespace InFalsusChartLoader
     /// not contain it, which is the visible form of "非法则不导入".
     /// </description></item>
     /// <item><description>
-    /// <b>Hook.</b> Twelve detours, installed by seven functions before the game can ask for
+    /// <b>Hook.</b> Thirteen detours, installed by eight functions before the game can ask for
     /// anything. Eight of them answer for something — the chart, the audio (a name and a read), and
     /// the pictures (three reference getters and two loaders, all sharing one handshake). Three only
     /// count: the play gate, the scene switch and the card builder say whether the game took each
-    /// step, which is not something the decompilation can be read for. And one changes a field
-    /// around a call the game makes, so that a difficulty change reaches the pictures. See
-    /// <see cref="Hooks"/>.
+    /// step, which is not something the decompilation can be read for. And two change what the game
+    /// does around a call it makes, so that a difficulty change reaches the pictures — one on the
+    /// song select, one on the pack screen. See <see cref="Hooks"/>.
     /// </description></item>
     /// <item><description>
     /// <b>Register.</b> The songs and the pack go into the game's own tables. This waits: both are

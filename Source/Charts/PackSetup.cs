@@ -172,8 +172,18 @@ namespace InFalsusChartLoader
         /// miss value, which is the literal text "Missing String Mapping": there is no fallback to
         /// the slug or to anything else.
         /// </summary>
+        /// <summary>
+        /// Which write it is, for the one place the distinction is needed: one that could not be made.
+        ///
+        /// An enum rather than the sentence it replaced, for the reason <see cref="Hooks.Hook"/> gives:
+        /// the value travels through <see cref="SetText"/>, which does real work and therefore cannot
+        /// be `[Conditional("DEBUG")]`, so a string argument to it is a string in every Release build.
+        /// The two sentences now live in <see cref="Name"/>, which that build does not carry.
+        /// </summary>
+        private enum TextWhat { PackName, SongText }
+
         internal static bool SetPackName(int packId, string name) =>
-            SetText(PackIdTypeMapping, packId, name, "the custom pack will have no name");
+            SetText(PackIdTypeMapping, packId, name, TextWhat.PackName);
 
         /// <summary>
         /// Gives a song a title or an artist, in the table the song list reads them from.
@@ -185,10 +195,10 @@ namespace InFalsusChartLoader
         /// has no title on its card, whichever fields the song record carries.
         /// </summary>
         internal static bool SetSongText(int mappingField, int songId, string text) =>
-            SetText(mappingField, songId, text, "the song will have no text of its own");
+            SetText(mappingField, songId, text, TextWhat.SongText);
 
         /// <summary>The one write, shared by the pack's name and a song's title and artist.</summary>
-        private static bool SetText(int mappingField, int id, string text, string what)
+        private static bool SetText(int mappingField, int id, string text, TextWhat what)
         {
             IntPtr klass = FieldResolver.ClassPointer("DataAccess");
             if (klass == IntPtr.Zero) return false;
@@ -199,21 +209,21 @@ namespace InFalsusChartLoader
             IntPtr mapping = Memory.Ptr(statics + FieldResolver.Field("DataAccess", "_mAb", StaticStringMapping));
             if (!Memory.LooksLikeObject(mapping))
             {
-                Diagnostics.Warn($"the localisation table is missing; {what}");
+                NotWritten(what, "the localisation table is missing");
                 return false;
             }
 
             IntPtr typeMapping = Memory.Ptr(mapping + mappingField);
             if (!Memory.LooksLikeObject(typeMapping))
             {
-                Diagnostics.Warn($"the localisation mapping at +0x{mappingField:X} is missing; {what}");
+                NotWritten(what, $"the localisation mapping at +0x{mappingField:X} is missing");
                 return false;
             }
 
             IntPtr table = Memory.Ptr(typeMapping + MappingOffset());
             if (!Memory.LooksLikeObject(table))
             {
-                Diagnostics.Warn($"the localisation table at +0x{mappingField:X} is missing; {what}");
+                NotWritten(what, $"the localisation table at +0x{mappingField:X} is missing");
                 return false;
             }
 
@@ -224,6 +234,29 @@ namespace InFalsusChartLoader
             // "pack name" is how a run cannot tell whether a write landed where it was aimed.
             Diagnostics.Info($"localisation +0x{mappingField:X}: entry {id} set to '{text}'");
             return true;
+        }
+
+        /// <summary>
+        /// Says which write could not be made, and where the lookup stopped, in a Debug build only.
+        ///
+        /// This one <b>can</b> be `[Conditional("DEBUG")]` — it only reports — and that is what keeps
+        /// the message at the call site from shipping: a conditional call takes its arguments with it.
+        /// The name still has to come from <see cref="Name"/>, because this body is compiled either
+        /// way and a literal in it would ship where the message does not.
+        /// </summary>
+        [System.Diagnostics.Conditional("DEBUG")]
+        private static void NotWritten(TextWhat what, string where) =>
+            Diagnostics.Warn($"{where}; {Name(what)}");
+
+        /// <summary>The two writes by name. Null in a Release build — see <see cref="TextWhat"/>.</summary>
+        private static string Name(TextWhat what)
+        {
+#if DEBUG
+            return what == TextWhat.PackName ? "the custom pack will have no name"
+                                             : "the song will have no text of its own";
+#else
+            return null;
+#endif
         }
 
         /// <summary>

@@ -37,7 +37,7 @@ namespace InFalsusChartLoader
             _va.Attach();
             _vaTramp = _va.Trampoline;
             Diagnostics.Info("_s._VA hooked");
-            return Landed("_s._VA", target, prologue);
+            return Landed(Hook.ChartLoader, target, prologue);
         }
 
         private static void DetachChartLoad()
@@ -67,7 +67,7 @@ namespace InFalsusChartLoader
                 }
                 catch (Exception e)
                 {
-                    Fault("_s._VA", e);
+                    Fault(Hook.ChartLoader, e);
                 }
             }
 
