@@ -31,21 +31,18 @@ namespace InFalsusChartLoader
         private const int StaticPackData = 0x60;
 
         // ---- SongData ----
-        private const int SongDataAllSongs = 0x20;
-
-        /// <summary>`SongData._Ffb`, a `BitArray` with one bit per song index.</summary>
-        private const int SongDataAvailability = 0x68;
+        // Everything in this section is an **alias** of the one resolved set in `Offsets`, which asks
+        // the running game where its fields are at startup (`Offsets.Resolve`). Read-only, so nothing
+        // here can drift away from it; the names stay because the call sites below read locally.
+        private static int SongDataAllSongs => Offsets.SongData.AllSongs;
+        private static int SongDataAvailability => Offsets.SongData.Availability;
 
         /// <summary>
-        /// `BitArray.m_array` and `m_length` — the backing ints and the bit count.
-        ///
-        /// Taken from the game's own `BitArray.Get` rather than from the type's layout on paper: it
-        /// bounds-checks against `+0x18` and fetches the word from `+0x10`. Every IL2CPP object
-        /// starts with eight bytes of class and eight of monitor, so the first field is at `0x10`;
-        /// `0x08` is the monitor and reads as zero, which is how a wrong value here fails quietly.
+        /// `BitArray.m_array` and `m_length` — a BCL layout, so it lives with the runtime's own
+        /// constants in <see cref="Offsets.Runtime"/> rather than with the game's fields.
         /// </summary>
-        private const int BitArrayArray = 0x10;
-        private const int BitArrayLength = 0x18;
+        private const int BitArrayArray = Offsets.Runtime.BitArrayArray;
+        private const int BitArrayLength = Offsets.Runtime.BitArrayLength;
 
         /// <summary>
         /// Grows the game's per-song `BitArray` to cover <paramref name="count"/> songs, with the new
@@ -115,8 +112,8 @@ namespace InFalsusChartLoader
             Memory.WriteI32(bits + BitArrayLength, count);
             Diagnostics.Info($"availability bits grown from {oldLength} to {count}");
         }
-        private const int SongDataNameIndex = 0x58;   // Dictionary<string, SongId> _Efb
-        private const long RvaSongDataRefresh = 0x4C54F0;  // private void _yOA()
+        private static int SongDataNameIndex => Offsets.SongData.NameIndex;   // Dictionary<string, SongId> _Efb
+        // (`SongData._yOA` — the index rebuild — is called by name; no RVA is kept for it.)
 
         /// <summary>
         /// `tutorial` is the one prefix the game's own rebuild leaves out of `_ffb`.
@@ -133,18 +130,20 @@ namespace InFalsusChartLoader
         private const int LocaleCount = 6;
 
         // ---- PackData ----
-        private const int PackDataPacks = 0x20;
+        private static int PackDataPacks => Offsets.PackData.Packs;
 
-        // ---- SongInfo, 0x40 bytes ----
-        private const int SongInfoSize = 0x40;
-        private const int SongInfoId = 0x00;          // SongId (ushort)
-        private const int SongInfoBaseName = 0x08;    // string
-        private const int SongInfoCharts = 0x18;      // SongChartInfo[]
-        private const int SongInfoPreviewStart = 0x20;  // float, seconds
-        private const int SongInfoPreviewEnd = 0x24;    // float, seconds
-        private const int SongInfoTitleReading = 0x28;  // string[]
-        private const int SongInfoArtistReading = 0x30; // string
-        private const int SongInfoRewardStyle = 0x3C;   // RewardStyle
+        // ---- SongInfo ----
+        // `Size` is measured off the live `allSongInfo` array (see `Offsets.Resolve`); the rest are
+        // resolved by name. All of them live in `Offsets`.
+        private static int SongInfoSize => Offsets.Song.Size;
+        private static int SongInfoId => Offsets.Song.Id;                  // SongId (ushort)
+        private static int SongInfoBaseName => Offsets.Song.BaseName;      // string
+        private static int SongInfoCharts => Offsets.Song.Charts;          // SongChartInfo[]
+        private static int SongInfoPreviewStart => Offsets.Song.PreviewStart;
+        private static int SongInfoPreviewEnd => Offsets.Song.PreviewEnd;
+        private static int SongInfoTitleReading => Offsets.Song.TitleReading;
+        private static int SongInfoArtistReading => Offsets.Song.ArtistReading;
+        private static int SongInfoRewardStyle => Offsets.Song.RewardStyle;
 
         /// <summary>
         /// `RewardStyle.Supress` — do not play the unlock reveal.
@@ -156,15 +155,15 @@ namespace InFalsusChartLoader
         /// </summary>
         private const int RewardStyleSupress = 0;
 
-        // ---- SongChartInfo, 0x30 bytes ----
-        private const int ChartInfoSize = 0x30;
-        private const int ChartInfoId = 0x00;         // string
-        private const int ChartInfoAvailable = 0x08;  // bool
-        private const int ChartInfoDifficulty = 0x09; // ChartDifficultyFlag
-        private const int ChartInfoDesigner = 0x10;   // string
-        private const int ChartInfoJacketDesigner = 0x18; // string
-        private const int ChartInfoRating = 0x20;     // int
-        private const int ChartInfoSection = 0x28;    // string, LevelSectionIndicator
+        // ---- SongChartInfo ----
+        private static int ChartInfoSize => Offsets.Chart.Size;
+        private static int ChartInfoId => Offsets.Chart.Id;                       // string
+        private static int ChartInfoAvailable => Offsets.Chart.Available;         // bool
+        private static int ChartInfoDifficulty => Offsets.Chart.Difficulty;       // ChartDifficultyFlag
+        private static int ChartInfoDesigner => Offsets.Chart.Designer;           // string
+        private static int ChartInfoJacketDesigner => Offsets.Chart.JacketDesigner;
+        private static int ChartInfoRating => Offsets.Chart.Rating;               // int
+        private static int ChartInfoSection => Offsets.Chart.Section;             // string
 
         /// <summary>
         /// Where the song list's level grouping changes over.
@@ -177,20 +176,31 @@ namespace InFalsusChartLoader
         /// </summary>
         private const int SectionBoundary = 9;
 
-        // ---- PackInfo, 0x18 bytes ----
-        private const int PackInfoSize = 0x18;
-        private const int PackInfoId = 0x00;          // PackId (ushort)
-        private const int PackInfoSlug = 0x08;        // string
-        private const int PackInfoSongs = 0x10;       // SongId[]
+        // ---- PackInfo ----
+        private static int PackInfoSize => Offsets.Pack.Size;
+        private static int PackInfoId => Offsets.Pack.Id;        // PackId (ushort)
+        private static int PackInfoSlug => Offsets.Pack.Slug;    // string
+        private static int PackInfoSongs => Offsets.Pack.Songs;  // SongId[]
 
         /// <summary>
-        /// This mod's pack id, and its index into the pack visual table.
+        /// This mod's pack id — taken from the live pack table, not a constant, and that is the fix
+        /// for a regression the 1.05 update shipped.
         ///
-        /// `PackId.Value` is an index into <c>PackSelectSceneAssets.packToAssets</c>, and a value
-        /// past the end does not fail — the game quietly falls back to the first entry's materials.
-        /// So the pack takes the slot after the shipped ones, and that table gains an entry to match.
+        /// A pack's id is three things at once: the index into
+        /// <c>PackSelectSceneAssets.packToAssets</c>, the key the localisation table names the pack
+        /// by, and the key <c>PackData</c> asks its DLC table about — `DlcRuntimePackConfiguration`
+        /// pairs a `PackId` with a `DlcId`, `PackData._tkA` turns that into a per-pack ownership map,
+        /// and the pack screen gates what is not owned. So the id has to be one the game is not
+        /// already using. It used to be the literal 7, which was free only because the game shipped
+        /// seven packs (0..6); when the update added an eighth, that pack took 7 and this mod's pack
+        /// took over its identity — the game drew IFCL as an unowned DLC, and the name write renamed
+        /// the DLC pack to IFCL. Both symptoms, one number.
+        ///
+        /// It stays -1 until <see cref="AddPack"/> has put the row in place, which is what makes a
+        /// failed insertion impossible to mistake for a successful one: nothing may key a name or a
+        /// visual to the reserved pack zero, which is what an unset id would otherwise reach.
         /// </summary>
-        internal const int CustomPackId = 7;
+        internal static int CustomPackId = -1;
 
         /// <summary>Where in the pack array this mod's pack is inserted. See <see cref="AddPack"/>.</summary>
         private const int CustomPackIndex = 1;
@@ -224,7 +234,14 @@ namespace InFalsusChartLoader
             songData = Memory.Ptr(statics + FieldResolver.Field("DataAccess", "_JAb", StaticSongData));
             packData = Memory.Ptr(statics + FieldResolver.Field("DataAccess", "_lAb", StaticPackData));
 
-            return Memory.LooksLikeObject(songData) && Memory.LooksLikeObject(packData);
+            bool ready = Memory.LooksLikeObject(songData) && Memory.LooksLikeObject(packData);
+
+            // Where the song tables' fields and strides actually are, asked of the running game once
+            // both objects exist. From here on nothing reads a constant this build was reversed with
+            // unless the game could not be asked at all.
+            if (ready) Offsets.Resolve(songData, packData);
+
+            return ready;
         }
 
         /// <summary>
@@ -260,10 +277,41 @@ namespace InFalsusChartLoader
             int count = Memory.LooksLikeObject(songs) ? Memory.I32(songs + Offsets.Runtime.ArrayLength) : 0;
 
             var taken = new HashSet<string>(StringComparer.Ordinal);
-            for (int i = 0; i < count; i++)
+
+            // The stride here is measured (`Offsets.Resolve`), and a *wrong* stride is the one failure
+            // this mod cannot afford: element i read at the wrong stride hands `Memory.Text` a pointer
+            // from the middle of a song, which passes every "does this look like an object" test and
+            // then faults inside the runtime. So the walk is bounded by the array's own byte length,
+            // and the first few slots are checked against the game's own invariant — a slot is valid
+            // exactly when the element's `Id` equals its index, which is what `SongData._CpA` tests.
+            // A table that fails that is reported and left unwalked, rather than trusted.
+            const int SlotsToCheck = 4;
+            int stride = SongInfoSize;
+            long byteLength = Memory.ArrayBytes(songs);
+
+            for (int i = 0; i < count && byteLength > 0 && (long)(i + 1) * stride <= byteLength; i++)
             {
-                IntPtr name = Memory.Ptr(songs + Offsets.Runtime.ArrayDataOffset + i * SongInfoSize + SongInfoBaseName);
-                string text = Memory.Text(name);
+                IntPtr slot = songs + Offsets.Runtime.ArrayDataOffset + i * stride;
+
+                // The game's own invariant (`_CpA`) is "a slot is valid exactly when the element's
+                // `Id` equals its index" — and an *empty* slot carries zero. The table has holes by
+                // design (this build: 90 slots, 78 named), so a hole is not evidence of anything and
+                // must not be read as one: only a non-zero id that disagrees with its index says the
+                // walk is not reading what it thinks it is. Rejecting holes turned the first hole in
+                // the first four slots into "the names were not checked" — and that check is the one
+                // thing standing between a name the game already has and `_yOA`, which throws partway
+                // through its rebuild and leaves every index it was building empty.
+                ushort id = Memory.U16(slot + SongInfoId);
+                if (i < SlotsToCheck && id != 0 && id != (ushort)i)
+                {
+                    Diagnostics.Warn($"the song table does not index the way this build expects " +
+                                     $"(slot {i} carries id {id}, not {i}); " +
+                                     "the names the game already uses were not checked");
+                    taken.Clear();
+                    break;
+                }
+
+                string text = Memory.Text(Memory.Ptr(slot + SongInfoBaseName));
                 if (text != null) taken.Add(text);
             }
 
@@ -521,6 +569,12 @@ namespace InFalsusChartLoader
                 return false;
             }
 
+            // The id has to be one the game is not using — see `CustomPackId` for what taking the DLC
+            // pack's id cost. Walked out of the table rather than computed from its length: the two
+            // agree only while the shipped ids run dense from zero, and a new pack is exactly what
+            // breaks that, silently, in the direction that matters.
+            int packId = NextPackId(oldPacks, oldCount);
+
             IntPtr packs = NewArray(oldPacks, oldCount + 1);
             if (packs == IntPtr.Zero) return false;
 
@@ -534,7 +588,7 @@ namespace InFalsusChartLoader
             Buffer.MemoryCopy((void*)source, (void*)data, head, head);
 
             IntPtr mine = (IntPtr)(data.ToInt64() + head);
-            Memory.WriteU16(mine + PackInfoId, CustomPackId);
+            Memory.WriteU16(mine + PackInfoId, (ushort)packId);
             Memory.WritePtr(mine + PackInfoSlug, Str("custom"));
             Memory.WritePtr(mine + PackInfoSongs, songIds);
 
@@ -542,9 +596,32 @@ namespace InFalsusChartLoader
             Buffer.MemoryCopy((void*)(source.ToInt64() + head), (void*)(mine.ToInt64() + PackInfoSize), rest, rest);
 
             Memory.WritePtr(packData + PackDataPacks, packs);
-            Diagnostics.Info($"pack '{PackName}' added with {songCount} songs at index {CustomPackIndex}, " +
-                             $"before the game's {oldCount - CustomPackIndex} shown packs");
+
+            // Published to the caller only now: the id is what the visuals table and the name are
+            // keyed by, and until the row is in place there is nothing to key them to.
+            CustomPackId = packId;
+            Diagnostics.Info($"pack '{PackName}' added with {songCount} songs at index {CustomPackIndex} " +
+                             $"(id {packId}), before the game's {oldCount - CustomPackIndex} shown packs");
             return true;
+        }
+
+        /// <summary>
+        /// The first pack id the game is not using.
+        ///
+        /// A too-low id is not a near miss — it is a pack the game already has, and taking it means
+        /// inheriting everything that pack is: its name slot, its row of visuals, and its DLC state.
+        /// </summary>
+        private static int NextPackId(IntPtr packs, int count)
+        {
+            int next = 0;
+
+            for (int i = 0; i < count; i++)
+            {
+                int id = Memory.U16(packs + Offsets.Runtime.ArrayDataOffset + i * PackInfoSize + PackInfoId);
+                if (id >= next) next = id + 1;
+            }
+
+            return next;
         }
 
         /// <summary>A `SongId[]` holding the ids this mod handed out.</summary>

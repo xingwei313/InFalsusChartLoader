@@ -7,36 +7,17 @@ namespace InFalsusChartLoader
 {
     internal static unsafe partial class Hooks
     {
-        /// <summary>`SongData._apA(in SongInfo, bool large)` — which reference holds a song's jacket.</summary>
-        private const long RvaJacketReference = 0x4C52B0;
-
         /// <summary>Where `AddressableHandleAutoReleaser` lives, for the runtime's own lookup.</summary>
         private const string Image = "Game.Common.dll";
 
         private const string Namespace = "ifapp.Game.Common";
 
-        /// <summary>
-        /// Fallback address for `AddressableHandleAutoReleaser._MIA&lt;T&gt;` — which loads that reference.
-        ///
-        /// <para>
-        /// ⚠ <b>This RVA is from a build the game no longer runs.</b> The address, and every other RVA in
-        /// this mod, comes from `dump.cs`, which was dumped from the `GameAssembly.dll` in this
-        /// repository (56 794 112 bytes, 2026-09-12). The installed game's copy is 56 758 272 bytes and
-        /// dated 2026-09-20, and its `global-metadata.dat` differs too. Every hook in this mod therefore
-        /// resolves <i>by name</i>, through the interop MethodInfo that Cpp2IL generates from the
-        /// installed game at launch; the constant is only what to fall back to when that fails, and on
-        /// a build it does not describe it lands on whatever now occupies the address.
-        /// </para>
-        /// <para>
-        /// The metadata names the old build's address `_MIA&lt;object&gt;`: the shared body every
-        /// reference-type instantiation goes through, and the one the card call sites
-        /// (`SmallSongCard._tS`, `LargeSongCard._OS`) call.
-        /// </para>
-        /// </summary>
-        private const long RvaJacketLoad = 0x75C770;
+        // `_MIA<T>` is the shared body every reference-type instantiation goes through, and it is what
+        // the card call sites (`SmallSongCard._tS`, `LargeSongCard._OS`) call. It is resolved through
+        // the runtime (see MethodResolver.ByRuntime) because reflection cannot see a generic's field —
+        // and no address is kept for it: see MethodResolver.ByName for why there is no RVA fallback.
 
         /// <summary>`SongData._ZOA(in SongChartInfo, bool large)` — the *other* reference getter.</summary>
-        private const long RvaJacketChartReference = 0x4BD9A0;
 
         /// <summary>
         /// `GameplayBackgrounds._UmA(GameplayBackground)` — the in-play background, which the `if`
@@ -44,10 +25,8 @@ namespace InFalsusChartLoader
         ///
         /// The name is `_UmA`, not the `_zDA` the demo build's source suggests: demo `$`-names and
         /// shipped `_`-names are not one mapping, and the class has exactly one method that answers
-        /// with a reference. The dumper gives it at RVA 0x478680, in `GameplayBackgrounds`
-        /// (`ifapp.Game.Data`, `Game.Data.dll`), instance, one `int` parameter.
+        /// with a reference. Resolved by name, like every other method here.
         /// </summary>
-        private const long RvaBackgroundLoad = 0x478680;
 
         /// <summary>
         /// `AssetReferenceT&lt;Material&gt; SongData._apA(in SongInfo songInfo, bool large)`
@@ -139,7 +118,7 @@ namespace InFalsusChartLoader
 
         private static bool InstallJacket()
         {
-            IntPtr reference = MethodResolver.ByName("SongData", "_apA", RvaJacketReference);
+            IntPtr reference = MethodResolver.ByName("SongData", "_apA");
             if (reference == IntPtr.Zero) return false;
 
             byte[] referencePrologue = Prologue(reference);
@@ -160,11 +139,11 @@ namespace InFalsusChartLoader
             //    operations cannot be performed on fields with types for which
             //    Type.ContainsGenericParameters is true`, MethodResolver catches it and answers zero.
             //    Measured, in the run this was written from.
-            //  * The RVA is a fixed address in one build. Falling back to it installs the hook
-            //    somewhere plausible-looking that is never called, and `Attach()` reports nothing
-            //    wrong — so it fails silently on every build but the one it was measured on, which is
-            //    the opposite of what a mod meant to run across versions needs. Refusing is better:
-            //    the count in "n/m hooks installed" then says the jacket will not be substituted.
+            //  * A pinned address belongs to one build. That fallback installed the hook somewhere
+            //    plausible-looking that was never called, and `Attach()` reported nothing wrong — so
+            //    it failed silently on every build but the one it was measured on, which is the
+            //    opposite of what a mod meant to run across versions needs. Refusing is better: the
+            //    count in "n/m hooks installed" then says the jacket will not be substituted.
             //
             // A third fact about this method, from `dump.cs`, because it decides what the walk below
             // can return: `_MIA<T>` is declared `// RVA: -1` — the generic definition has no code —
@@ -178,9 +157,9 @@ namespace InFalsusChartLoader
             {
                 // "could not be found" rather than "could not be resolved": this line ships in Release,
                 // and build.bat's artifact check keeps `could not be resolved` on its bad list because
-                // that phrase belongs to MethodResolver's Debug-only RVA-fallback warning. This is the
-                // other kind — a message a release user is meant to see — so it uses the wording the
-                // rest of this mod's shipping errors use.
+                // that phrase belongs to a Debug-only offset warning, which a release does not carry.
+                // This is the other kind — a message a release user is meant to see — so it uses the
+                // wording the rest of this mod's shipping errors use.
                 Diagnostics.Error("AddressableHandleAutoReleaser._MIA could not be found; custom " +
                                   "jackets will not be substituted onto the song list");
                 return false;
@@ -228,7 +207,7 @@ namespace InFalsusChartLoader
         /// </summary>
         private static bool InstallBackground()
         {
-            IntPtr target = MethodResolver.ByName("GameplayBackgrounds", "_UmA", RvaBackgroundLoad);
+            IntPtr target = MethodResolver.ByName("GameplayBackgrounds", "_UmA");
             if (target == IntPtr.Zero)
             {
                 Diagnostics.Warn("GameplayBackgrounds._UmA could not be found; a custom song will play " +
@@ -253,7 +232,7 @@ namespace InFalsusChartLoader
         /// </summary>
         private static bool InstallChartReference()
         {
-            IntPtr target = MethodResolver.ByName("SongData", "_ZOA", RvaJacketChartReference);
+            IntPtr target = MethodResolver.ByName("SongData", "_ZOA");
             if (target == IntPtr.Zero)
             {
                 Diagnostics.Warn("SongData._ZOA could not be found; the loading screen and the " +

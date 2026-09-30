@@ -4,18 +4,25 @@ using System.Runtime.InteropServices;
 namespace InFalsusChartLoader
 {
     /// <summary>
-    /// Where the game's native code lives.
+    /// Where the game's native code lives — asked once, and reported by the probe.
     ///
-    /// GameAssembly.dll is not relocated (preferred base 0x180000000), so moduleBase + RVA lands on
-    /// the function. RVAs come from Il2CppDumper's dump.cs and are pinned to this build; nothing
-    /// here can tell that they have gone stale, so whoever uses one falls back to it knowingly.
+    /// There is deliberately no `FromRva` beside this. This mod used to relocate a handful of pinned
+    /// dump.cs addresses against this base; the last one was the song-select card builder, and it
+    /// failed the way the others were removed for — the address belonged to a build the game no
+    /// longer runs, so the patch landed on whatever now occupied it (a parameterless `_rN()`,
+    /// `MISSING.md` D5) and the log still said "hooked". Every target is resolved by name now, and a
+    /// name that does not resolve leaves its hook uninstalled instead of patching a guess.
+    ///
+    /// What is still wanted from this base is the one line the probe prints: whether the module was
+    /// found at all. A zero there means nothing this mod does can land, and it is worth knowing that
+    /// before a hook count is read as good news.
     ///
     /// The handle comes from `GetModuleHandleW` — "the handle of this module, if it is already
     /// loaded", which is exactly the question, and MelonLoader injects into a running game, so by
     /// the time anything here runs the module is there.
     ///
     /// Nothing is remembered on failure: the answer is re-asked while it is zero, so no caller
-    /// depends on being the first one to run. A zero is reported by whoever wanted an address.
+    /// depends on being the first one to run.
     ///
     /// `kernel32` is the one thing in this mod that names a platform outright — everything else is
     /// bound to this build of the game rather than to an OS. Do not replace it with
@@ -25,7 +32,7 @@ namespace InFalsusChartLoader
     /// </summary>
     internal static class GameAssembly
     {
-        /// <summary>The module the RVAs are relative to.</summary>
+        /// <summary>The module the game's native code is in.</summary>
         private const string Module = "GameAssembly.dll";
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = false)]
@@ -41,13 +48,6 @@ namespace InFalsusChartLoader
                 if (_base == IntPtr.Zero) _base = GetModuleHandleW(Module);
                 return _base;
             }
-        }
-
-        /// <summary>Native address from a dump.cs RVA, relocated by the real module base.</summary>
-        internal static IntPtr FromRva(long rva)
-        {
-            IntPtr b = Base;
-            return b == IntPtr.Zero ? IntPtr.Zero : (IntPtr)(b.ToInt64() + rva);
         }
     }
 }

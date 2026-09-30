@@ -42,13 +42,34 @@ namespace InFalsusChartLoader
     internal static unsafe class PendingReads
     {
         /// <summary>`_hF._vSA` — reads handed to the native side and not finished yet.</summary>
-        private const int FieldDispatched = 0x20;
+        private static int FieldDispatched = 0x20;
 
         /// <summary>`_hF._VSA` — reads the dispatcher has decided to skip.</summary>
-        private const int FieldCancelled = 0x28;
+        private static int FieldCancelled = 0x28;
 
         /// <summary>`_hF._tSA`, the manager's state word. Inline, not a pointer: it reads 1.</summary>
-        private const int FieldState = 0x00;
+        private static int FieldState = 0x00;
+
+        private static bool _fieldsResolved;
+
+        /// <summary>
+        /// `_hF`'s three fields, asked of the running game by name, once.
+        ///
+        /// They are offsets into the class's statics block, and they are properties of *this build of
+        /// the game* rather than of this mod — the same reason every other offset here is looked up
+        /// (see <see cref="Offsets"/>). A patch that inserts a field ahead of these moves them, and a
+        /// stale one would have this mod reading and removing from the wrong sets without saying so.
+        /// </summary>
+        private static void ResolveFields()
+        {
+            if (_fieldsResolved) return;
+
+            FieldDispatched = FieldResolver.Field("_hF", "_vSA", FieldDispatched);
+            FieldCancelled = FieldResolver.Field("_hF", "_VSA", FieldCancelled);
+            FieldState = FieldResolver.Field("_hF", "_tSA", FieldState);
+
+            _fieldsResolved = true;
+        }
 
         /// <summary>The value of that word while the manager is not taking reads.</summary>
         private const int NotReading = 2;
@@ -82,6 +103,7 @@ namespace InFalsusChartLoader
         {
             if (!Ready()) return;
 
+            ResolveFields();
             IntPtr info = Memory.Ptr(record);
             if (info == IntPtr.Zero) return;
 
@@ -103,6 +125,7 @@ namespace InFalsusChartLoader
         {
             if (!Ready()) return;
 
+            ResolveFields();
             if (Memory.I32(_statics + FieldState) == NotReading) { NotTaken++; return; }
 
             IntPtr info = Memory.Ptr(record);

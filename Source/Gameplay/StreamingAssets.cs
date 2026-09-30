@@ -35,10 +35,10 @@ namespace InFalsusChartLoader
         /// <summary>`_BG._RxA`, the singleton, at that offset inside the statics block.</summary>
         private const int StaticSingleton = 0x10;
 
-        private const int FieldFiles = 0x28;    // FileInfo[] _TxA
-        private const int FieldLengths = 0x30;  // long[]    _uxA
-        private const int FieldFlags = 0x38;    // bool[]    _UxA
-        private const int FieldChunks = 0x40;   // _DG[]     _vxA, 40 bytes per entry
+        private static int FieldFiles = 0x28;    // FileInfo[] _TxA
+        private static int FieldLengths = 0x30;  // long[]    _uxA
+        private static int FieldFlags = 0x38;    // bool[]    _UxA
+        private static int FieldChunks = 0x40;   // _DG[]     _vxA, 40 bytes per entry
 
         /// <summary>No stand-in: the array holds values, so a zeroed slot is a complete one.</summary>
         private const int None = -1;
@@ -72,6 +72,13 @@ namespace InFalsusChartLoader
                     Diagnostics.Warn("_BG has no statics block; custom audio will not work");
                     return false;
                 }
+
+                // The manager's four tables, asked of the game by name. They are fields of *this build*
+                // of the game, so none of them belongs in this file as a number (see Offsets).
+                FieldFiles = FieldResolver.Field("_BG", "_TxA", FieldFiles);
+                FieldLengths = FieldResolver.Field("_BG", "_uxA", FieldLengths);
+                FieldFlags = FieldResolver.Field("_BG", "_UxA", FieldFlags);
+                FieldChunks = FieldResolver.Field("_BG", "_vxA", FieldChunks);
 
                 IntPtr bg = Memory.Ptr(statics + FieldResolver.Field("_BG", "_RxA", StaticSingleton));
                 if (!Memory.LooksLikeObject(bg))

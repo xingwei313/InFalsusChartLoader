@@ -7,14 +7,10 @@ namespace InFalsusChartLoader
 {
     internal static unsafe partial class Hooks
     {
-        /// <summary>private void _ZgA(record) — the FMOD servicing thread's per-read handler.</summary>
-        private const long RvaZgA = 0x44CC30;
-
-        /// <summary>private void _bGA(record, uint result) — hands the filled buffer to the native transform.</summary>
-        private const long RvaBga = 0x44D410;
-
-        /// <summary>public bool _DJA(string name, out int index) — name to StreamingAssets index.</summary>
-        private const long RvaDja = 0x45F130;
+        // The three methods this file hooks, each resolved by name:
+        //   _ZgA  private void _ZgA(record)                 — the FMOD servicing thread's per-read handler
+        //   _bGA  private void _bGA(record, uint result)    — hands the filled buffer to the native transform
+        //   _DJA  public bool _DJA(string, out int index)   — name to StreamingAssets index
 
         /// <summary>
         /// `_J._hF._ZgA(record, _)`
@@ -49,13 +45,13 @@ namespace InFalsusChartLoader
         private static bool InstallAudioLoad()
         {
             // `_hF`, not `_J._hF`: the interop index is keyed by the type's own name, and a nested
-            // type's name does not carry its parent. Asking for the qualified name finds nothing and
-            // silently falls back to the RVA — which works, but loses the one route that survives a
-            // game update.
-            IntPtr zgA = MethodResolver.ByName("_hF", "_ZgA", RvaZgA);
+            // type's name does not carry its parent. Asking for the qualified name finds nothing —
+            // and now that there is no RVA to fall back to, that is an Error naming the method and no
+            // hook at all, instead of a patch at a pinned address that happened to work once.
+            IntPtr zgA = MethodResolver.ByName("_hF", "_ZgA");
             if (zgA == IntPtr.Zero) return false;
 
-            IntPtr bga = MethodResolver.ByName("_hF", "_bGA", RvaBga);
+            IntPtr bga = MethodResolver.ByName("_hF", "_bGA");
             if (bga == IntPtr.Zero) return false;
             CompleteRead = (delegate* unmanaged[Cdecl]<IntPtr, uint, void>)bga;
 
@@ -69,7 +65,7 @@ namespace InFalsusChartLoader
             _zgaTramp = _zga.Trampoline;
             Diagnostics.Info("_J._hF._ZgA hooked");
 
-            IntPtr dja = MethodResolver.ByName("_BG", "_DJA", RvaDja);
+            IntPtr dja = MethodResolver.ByName("_BG", "_DJA");
             if (dja == IntPtr.Zero) return false;
 
             byte[] djaPrologue = Prologue(dja);

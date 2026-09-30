@@ -22,20 +22,11 @@ namespace InFalsusChartLoader
         /// <summary>`DataAccess._NAb`, the pack visual table.</summary>
         private const int StaticPackAssets = 0x88;
 
-        /// <summary>`PackSelectSceneAssets.packToAssets`.</summary>
-        private const int PackAssetsTable = 0x18;
-
-        /// <summary>
-        /// Which row a new pack borrows its look from — the In Falsus pack.
-        ///
-        /// The table is indexed by a pack's own id, so this is the id as well as the position. It is
-        /// one and not zero because zero is the reserved, empty entry at the head of the pack list:
-        /// copying that would give a pack the look of the entry the game never draws.
-        /// </summary>
-        private const int InFalsusPackId = 1;
+        /// <summary>`PackSelectSceneAssets.packToAssets` — resolved by name, see `ResolveFields`.</summary>
+        private static int PackAssetsTable = 0x18;
 
         /// <summary>`PackData._SkA()`, which rebuilds the song-to-pack lookup.</summary>
-        private const long RvaRebuildLookup = 0x495C80;
+        // (`PackData._SkA` — the lookup rebuild — is called by name; no RVA is kept for it.)
 
         /// <summary>The pack visuals, or false while the game has not loaded them.</summary>
         internal static bool TryGetVisuals(out IntPtr packAssets)
@@ -49,7 +40,10 @@ namespace InFalsusChartLoader
             if (statics == IntPtr.Zero) return false;
 
             packAssets = Memory.Ptr(statics + FieldResolver.Field("DataAccess", "_NAb", StaticPackAssets));
-            return Memory.LooksLikeObject(packAssets);
+            if (!Memory.LooksLikeObject(packAssets)) return false;
+
+            ResolveFields();
+            return true;
         }
 
         /// <summary>
@@ -90,7 +84,19 @@ namespace InFalsusChartLoader
                 return false;
             }
 
-            int from = count > InFalsusPackId ? InFalsusPackId : 0;
+            // Which row it wears: the In Falsus pack's — as long as that row has something to draw
+            // with. `Hooks.SourceRow` owns that question, because the same choice is made on every
+            // frame afterwards: this mod's row does not stay as written (something in this build puts
+            // a material into it during play), so the row is kept equal to its source rather than
+            // written once. See `Hooks.Keep`.
+            int from = Hooks.SourceRow(table, count, stride);
+            if (from < 0)
+            {
+                Diagnostics.Warn("no shipped pack row has a material to copy; the custom pack will " +
+                                 "wear the game's fallback");
+                from = 0;
+            }
+
             unsafe
             {
                 Buffer.MemoryCopy(
@@ -104,6 +110,12 @@ namespace InFalsusChartLoader
                              $"row {packIndex} copying row {from}, {stride} bytes");
             return true;
         }
+
+        /// <summary>
+        /// `PackSelectSceneAssets.packToAssets`'s offset, resolved by name — asked for by the row keep,
+        /// which runs every frame and must not re-ask the field resolver for it.
+        /// </summary>
+        internal static int VisualsTableOffset => PackAssetsTable;
 
         /// <summary>
         /// Rebuilds the game's song-to-pack lookup so it knows the new songs belong to the new pack.
@@ -140,7 +152,7 @@ namespace InFalsusChartLoader
         private const int StaticStringMapping = 0x70;
 
         /// <summary>`DynamicStringMapping.packIdTypeMapping`.</summary>
-        private const int PackIdTypeMapping = 0x18;
+        private static int PackIdTypeMapping = 0x18;
 
         /// <summary>
         /// The three mappings a song's own card text comes from.
@@ -149,17 +161,56 @@ namespace InFalsusChartLoader
         /// game shows them in different places, and it is keyed by the same `SongId` — so the write is
         /// the same call, against the field the dump lists as `jacketIllustratorNameTypeMapping`.
         /// </summary>
-        internal const int SongTitleTypeMapping = 0x30;
-        internal const int SongArtistTypeMapping = 0x38;
-        internal const int SongIllustratorTypeMapping = 0x78;
+        internal static int SongTitleTypeMapping = 0x30;
+        internal static int SongArtistTypeMapping = 0x38;
+        internal static int SongIllustratorTypeMapping = 0x78;
 
-        /// <summary>`DynamicStringMapping.TextMappingValues` — five strings, one per language.</summary>
-        private const int TextMappingValuesSize = 0x28;
+        private static bool _fieldsResolved;
 
-        private const int ValueEnglish = 0x00;
-        private const int ValueJapanese = 0x08;
-        private const int ValueTraditionalChinese = 0x18;
-        private const int ValueSimplifiedChinese = 0x20;
+        /// <summary>
+        /// Every field offset this file uses, asked of the running game by name, once.
+        ///
+        /// None of these is a property of the mod — they are properties of *this build of the game*,
+        /// and a patch moves them without anything here failing loudly (a stale offset reads a
+        /// plausible-looking value from the wrong place). The constants above are only what this
+        /// build was reversed with; the game's answer is adopted, and a name that cannot be resolved
+        /// keeps its constant and says so in the log.
+        /// </summary>
+        private static void ResolveFields()
+        {
+            if (_fieldsResolved) return;
+
+            PackAssetsTable = FieldResolver.Field("PackSelectSceneAssets", "packToAssets", PackAssetsTable);
+
+            PackIdTypeMapping = FieldResolver.Field("DynamicStringMapping", "packIdTypeMapping",
+                                                    PackIdTypeMapping);
+            SongTitleTypeMapping = FieldResolver.Field("DynamicStringMapping", "songIdTitleTypeMapping",
+                                                       SongTitleTypeMapping);
+            SongArtistTypeMapping = FieldResolver.Field("DynamicStringMapping", "songIdArtistTypeMapping",
+                                                        SongArtistTypeMapping);
+            SongIllustratorTypeMapping = FieldResolver.Field("DynamicStringMapping",
+                                                             "jacketIllustratorNameTypeMapping",
+                                                             SongIllustratorTypeMapping);
+
+            _fieldsResolved = true;
+        }
+
+        /// <summary>
+        /// `DynamicStringMapping.TextMappingValues` — **five string pointers in a row**, one per
+        /// language, so every slot is `index × pointer size` and the struct is five of them.
+        ///
+        /// Written this way rather than as literals because what fixes the layout is the pointer size,
+        /// which belongs to the runtime and not to this game: on x64 these come out as
+        /// 0x28 / 0x00 / 0x08 / 0x18 / 0x20 — the numbers this file used to carry — and the third slot
+        /// is the one language this mod does not write. (The type has no declaration of its own to
+        /// look up in the dump, which is why it is not resolved by name like the fields above.)
+        /// </summary>
+        private static readonly int TextMappingValuesSize = 5 * IntPtr.Size;
+
+        private static readonly int ValueEnglish = 0 * IntPtr.Size;
+        private static readonly int ValueJapanese = 1 * IntPtr.Size;
+        private static readonly int ValueTraditionalChinese = 3 * IntPtr.Size;
+        private static readonly int ValueSimplifiedChinese = 4 * IntPtr.Size;
 
         private static int _mappingOffset;
 

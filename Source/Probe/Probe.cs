@@ -31,12 +31,15 @@ namespace InFalsusChartLoader
     /// </summary>
     internal static class Probe
     {
-        private const int SongInfoSize = 0x40;
-        private const int SongInfoId = 0x00;
-        private const int SongInfoBaseName = 0x08;
-        private const int SongInfoCharts = 0x18;
-        private const int SongInfoTitleReading = 0x28;
-        private const int SongInfoArtistReading = 0x30;
+        // Aliases of the one resolved set (`Offsets`) rather than a second copy of the numbers: the
+        // probe's independent opinion is the `FieldResolver.Lookup` call below, which asks the game
+        // for each field by name and reports what it says — not a duplicated constant.
+        private static int SongInfoSize => Offsets.Song.Size;
+        private static int SongInfoId => Offsets.Song.Id;
+        private static int SongInfoBaseName => Offsets.Song.BaseName;
+        private static int SongInfoCharts => Offsets.Song.Charts;
+        private static int SongInfoTitleReading => Offsets.Song.TitleReading;
+        private static int SongInfoArtistReading => Offsets.Song.ArtistReading;
 
         // ---------------------------------------------------------------- one: reaching the game
 
@@ -51,12 +54,12 @@ namespace InFalsusChartLoader
             line($"hooks           {installed}/{attempted}");
             line($"offsets         {FieldResolver.Stats()}");
 
-            // Every RVA fallback in this mod is relocated against this. A wrong base turns those
-            // into silent misses, and a zero one means the module was not found at all — both worth
-            // knowing before a hook is reported as installed.
+            // Nothing in the mod relocates a pinned address any more, so this is not a base for
+            // anything — it is the yes/no on whether GameAssembly was found at all. A zero there
+            // means no hook can have landed, whatever the count above says.
             long baseAddress = GameAssembly.Base.ToInt64();
             line($"game assembly   0x{baseAddress:X}" +
-                 (baseAddress == 0 ? "  <-- NOT FOUND; every RVA fallback is dead" : ""));
+                 (baseAddress == 0 ? "  <-- NOT FOUND; no hook can work" : ""));
         }
 
         // ---------------------------------------------------------------- two: what was imported
@@ -138,7 +141,7 @@ namespace InFalsusChartLoader
             $"askedNoPicture={Hooks.ApaAsked} mia={Hooks.MiaCalls}/{Hooks.MiaClaimed} " +
             $"zoa={Hooks.ZoaCalls}/{Hooks.ZoaArmed} lia={Hooks.LiaCalls}/{Hooks.LiaClaimed} " +
             $"uma={Hooks.UmaCalls}/{Hooks.UmaArmed} " +
-            $"cards={Hooks.CardsBuilt}/{Hooks.CardsOurs} gate={Hooks.PlayGateCalls}/{Hooks.PlayGateYes} " +
+            $"gate={Hooks.PlayGateCalls}/{Hooks.PlayGateYes} " +
             // The selection the game last applied, and how often a difficulty change was given the
             // reload the game would not have done by itself. `askedNoPicture` above is the other
             // half: it counts the times a jacket was asked for and the difficulty could not be told,
@@ -213,13 +216,19 @@ namespace InFalsusChartLoader
         {
             IntPtr packs = ArrayAt(packData, "PackData", "PackInfo");
             int count = Length(packs);
+            int stride = Stride(packs, count);
 
-            for (int i = 0; i < count && i < 4; i++)
+            // Every pack, not the first four: this mod's is at the end of the list, and so is the DLC
+            // pack whose id it must not take — the two numbers a reader has to compare are on that
+            // line. The stride is measured, not the 0x18 this used to carry: `PackInfo` gained a
+            // field, and reading rows at the old stride printed ids and slugs that belonged to no
+            // pack at all.
+            for (int i = 0; i < count && i < 12; i++)
             {
-                IntPtr pack = packs + Offsets.Runtime.ArrayDataOffset + i * 0x18;
-                string slug = Memory.Text(Memory.Ptr(pack + 0x08), 64);
-                line($"pack[{i}]         id={Memory.I32(pack) & 0xFFFF} slug='{slug}' " +
-                     $"songs={Length(Memory.Ptr(pack + 0x10))}");
+                IntPtr pack = packs + Offsets.Runtime.ArrayDataOffset + i * stride;
+                line($"pack[{i}]         id={Memory.U16(pack + Offsets.Pack.Id)} " +
+                     $"slug='{Memory.Text(Memory.Ptr(pack + Offsets.Pack.Slug), 64)}' " +
+                     $"songs={Length(Memory.Ptr(pack + Offsets.Pack.Songs))}");
             }
         }
 
@@ -227,17 +236,37 @@ namespace InFalsusChartLoader
         {
             if (!Memory.LooksLikeObject(packAssets)) { line("pack visuals    NOT REACHED"); return; }
 
-            IntPtr table = Memory.Ptr(packAssets + 0x18);
+            IntPtr table = ArrayAt(packAssets, "PackSelectSceneAssets", "packToAssets");
             int count = Length(table);
-            line($"packToAssets    {count} rows");
+            int stride = Stride(table, count);
 
-            // Only the first slot of a row is checked: if the row exists at all, the rest of it is a
-            // copy of row zero and the read that matters is whether the index is in range.
+            // The object and the array, not just the row count: whether the pack screen draws from the
+            // same instance this mod grew is a question only their addresses can answer.
+            line($"pack visuals    assets=0x{packAssets.ToInt64():X} table=0x{table.ToInt64():X} " +
+                 $"{count} rows of {stride} bytes");
+
+            // The first material of every row, as a pointer: rows that share one are rows the game has
+            // not filled, and the row this mod wrote is recognisable by matching the one it copied.
             for (int i = 0; i < count; i++)
             {
-                IntPtr row = table + Offsets.Runtime.ArrayDataOffset + i * 0x80;
-                IntPtr material = Memory.Ptr(row);
-                line($"  row[{i}]        first material {(Memory.LooksLikeObject(material) ? "set" : "NULL")}");
+                IntPtr row = table + Offsets.Runtime.ArrayDataOffset + i * stride;
+                line($"  row[{i}]        at=0x{row.ToInt64():X} first=0x{Memory.Ptr(row).ToInt64():X} " +
+                     $"backing=0x{Memory.Ptr(row + 0x60).ToInt64():X}");
+            }
+        }
+
+        /// <summary>An array's element size, measured off the array itself, or 0.</summary>
+        private static int Stride(IntPtr array, int count)
+        {
+            if (!Memory.LooksLikeObject(array) || count <= 0) return 0;
+
+            try
+            {
+                return (int)(Il2CppInterop.Runtime.IL2CPP.il2cpp_array_get_byte_length(array) / count);
+            }
+            catch (Exception)
+            {
+                return 0;
             }
         }
 

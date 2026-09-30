@@ -5,19 +5,24 @@ namespace InFalsusChartLoader
     /// <summary>
     /// The native hooks: which game functions are patched, and what happens when one faults.
     ///
-    /// All of them are thin. Each hook is a file of its own under Detours/ — its RVA, its delegate
-    /// shape, its trampoline and its detour body — and the decisions live in <see cref="ChartCatalog"/>
+    /// All of them are thin. Each hook is a file of its own under Detours/ — its delegate shape, its
+    /// trampoline and its detour body — and the decisions live in <see cref="ChartCatalog"/>
     /// and <see cref="AudioCatalog"/>, so a mistake here is a routing mistake rather than a data one.
     ///
-    /// RVAs are from Il2CppDumper's dump.cs; <see cref="MethodResolver"/> prefers the runtime
-    /// MethodInfo and only falls back to them.
+    /// Every target is resolved by name, through the interop assembly Cpp2IL generates from the
+    /// installed game. No address is pinned anywhere in this mod: a name that does not resolve leaves
+    /// its hook uninstalled and says so, rather than patching a guess and reporting success — see
+    /// <see cref="MethodResolver"/> for why that distinction is the whole point.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Thirteen detours, installed by eight functions. Eight of them exist because a custom song needs
+    /// Fourteen detours, installed by seven functions. Eight of them exist because a custom song needs
     /// the game to accept something it has no path for — a name it will look up, a byte range it
     /// will read, a picture it cannot reach. Each of those answers, and each is on a hot path, so
-    /// each stays thin. Three more answer nothing: they count and report, because whether the game
+    /// each stays thin. Two more keep one row of the pack screen's visual table the way the mod's
+    /// pack was given it — a copy of the In Falsus pack's — because this build writes those rows at
+    /// runtime, once at each of the two places the screen reads that row from. Two more answer
+    /// nothing: they count and report, because whether the game
     /// took each step cannot be read off the decompilation with confidence and one number per step
     /// settles it. The last two do neither — each changes what the game does around a call it is
     /// making, so that a difficulty change reaches the pictures. One widens the song-select's own
@@ -74,12 +79,6 @@ namespace InFalsusChartLoader
     /// game does not re-ask at all when the difficulty changes. The difficulty is taken from this
     /// call, and the cards are rebuilt through the game's own card builder when it moves. See
     /// <c>PackVisualHook</c>.
-    /// </description></item>
-    /// <item><description>
-    /// <b>The song-select's card builder</b> — the odd one out: it counts the cards the list is
-    /// built from, because whether a custom song survives the filter that decides the list cannot be
-    /// read off the decompilation with confidence, and one counter settles it. See
-    /// <c>SongCardHook</c>.
     /// </description></item>
     /// </list>
     /// <para>
@@ -145,7 +144,6 @@ namespace InFalsusChartLoader
             Count(InstallChartLoad());
             Count(InstallAudioLoad());
             Count(InstallJacket());
-            Count(InstallSongCard());
             Count(InstallSongSelect());
             Count(InstallPackVisual());
             Count(InstallPlayGate());
@@ -165,7 +163,6 @@ namespace InFalsusChartLoader
             DetachPlayGate();
             DetachPackVisual();
             DetachSongSelect();
-            DetachSongCard();
             DetachJacket();
             DetachAudioLoad();
             DetachChartLoad();
@@ -220,9 +217,9 @@ namespace InFalsusChartLoader
             ChartReference,
             ChartMaterial,
             Background,
-            SongCard,
             SongSelectApply,
             PackVisual,
+            PackRow,
             PlayGate,
             SceneSwitch,
         }
@@ -270,9 +267,9 @@ namespace InFalsusChartLoader
             Hook.ChartReference => "SongData._ZOA",
             Hook.ChartMaterial => "AddressableHandleAutoReleaser._LIA",
             Hook.Background => "GameplayBackgrounds._UmA",
-            Hook.SongCard => "the song card builder",
             Hook.SongSelectApply => "SongSelectScene._MN",
             Hook.PackVisual => "PackVisualMemberLarge._vc",
+            Hook.PackRow => "the pack row accessor (SongSelectPackAssets[])",
             Hook.PlayGate => "SongSelectScene._sN",
             Hook.SceneSwitch => "CoreScene._CB.MoveNext",
             _ => "(unknown hook)",

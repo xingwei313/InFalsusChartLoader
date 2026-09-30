@@ -23,13 +23,15 @@ namespace InFalsusChartLoader
     /// not contain it, which is the visible form of "非法则不导入".
     /// </description></item>
     /// <item><description>
-    /// <b>Hook.</b> Thirteen detours, installed by eight functions before the game can ask for
+    /// <b>Hook.</b> Thirteen detours, installed by seven functions before the game can ask for
     /// anything. Eight of them answer for something — the chart, the audio (a name and a read), and
-    /// the pictures (three reference getters and two loaders, all sharing one handshake). Three only
-    /// count: the play gate, the scene switch and the card builder say whether the game took each
-    /// step, which is not something the decompilation can be read for. And two change what the game
-    /// does around a call it makes, so that a difficulty change reaches the pictures — one on the
-    /// song select, one on the pack screen. See <see cref="Hooks"/>.
+    /// the pictures (three reference getters and two loaders, all sharing one handshake). One more
+    /// answers for this mod's pack at the single place the game reads a pack's row of visuals, giving
+    /// it the In Falsus pack's row. Two only
+    /// count: the play gate and the scene switch say whether the game took each step, which is not
+    /// something the decompilation can be read for. And two change what the game does around a call
+    /// it makes, so that a difficulty change reaches the pictures — one on the song select, one on
+    /// the pack screen. See <see cref="Hooks"/>.
     /// </description></item>
     /// <item><description>
     /// <b>Register.</b> The songs and the pack go into the game's own tables. This waits: both are
@@ -163,16 +165,29 @@ namespace InFalsusChartLoader
                     return;
                 }
 
-                // Two follow-ups the pack needs. Both are tolerant of failure -- a pack with no row of
-                // its own still draws, wearing the first pack's look, and a stale lookup only makes
-                // reverse lookups about custom songs answer nothing -- so neither is fatal.
-                if (PackSetup.TryGetVisuals(out IntPtr packAssets))
-                    PackSetup.ExtendVisuals(packAssets, SongCatalog.CustomPackId);
+                // Two follow-ups the pack needs, and only when there is a pack to follow up on: an id
+                // still at -1 means `AddPack` refused, and both of these are keyed by that id — an
+                // unset one is zero, which is the reserved pack the game never draws. Writing a name
+                // or a row of visuals against it would put this mod's text on a pack that is not its
+                // own, which is the same class of mistake as taking the DLC pack's id was.
+                if (SongCatalog.CustomPackId < 0)
+                {
+                    Diagnostics.Error("the custom pack could not be added; the custom songs are in the " +
+                                      "song list but have no pack of their own");
+                }
                 else
-                    Diagnostics.Warn("the pack visual table could not be reached");
+                {
+                    // Both are tolerant of failure -- a pack with no row of its own still draws,
+                    // wearing the first pack's look, and a stale lookup only makes reverse lookups
+                    // about custom songs answer nothing -- so neither is fatal.
+                    if (PackSetup.TryGetVisuals(out IntPtr packAssets))
+                        PackSetup.ExtendVisuals(packAssets, SongCatalog.CustomPackId);
+                    else
+                        Diagnostics.Warn("the pack visual table could not be reached");
 
-                PackSetup.RefreshLookup(packData);
-                PackSetup.SetPackName(SongCatalog.CustomPackId, SongCatalog.PackName);
+                    PackSetup.RefreshLookup(packData);
+                    PackSetup.SetPackName(SongCatalog.CustomPackId, SongCatalog.PackName);
+                }
 
 #if DEBUG
                 PackSetup.TryGetVisuals(out IntPtr packAssetsAfter);

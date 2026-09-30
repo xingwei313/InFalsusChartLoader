@@ -40,12 +40,13 @@ namespace InFalsusChartLoader
         /// </description></item>
         /// </list>
         /// <para>
-        /// The RVA is measured on the installed build and is documentation: this resolves by name only.
-        /// A wrong address here would be a patch into the middle of something else, and the failure
-        /// would be silent — see <see cref="MethodResolver"/> and the note on `_MIA`.
+        /// Nothing here is pinned: both methods are resolved by name, so a miss leaves the hook
+        /// uninstalled rather than patching a wrong address — see <see cref="MethodResolver"/> and
+        /// the note on `_MIA`.
         /// </para>
         /// </summary>
-        private const long RvaPackDifficulty = 0x531190;
+        // (No RVA is kept here: `PackVisualMemberLarge._vc` and `PackSongCardMember._pc` are both
+        // resolved by name — see MethodResolver.ByName.)
 
         /// <summary>
         /// `PackSongCardMember._pc(DataAccess, _SH) -> void` — build one card and its jacket.
@@ -61,7 +62,6 @@ namespace InFalsusChartLoader
         /// Reached by name only, for the reason above: on a build where it is gone this degrades to
         /// "the picture updates when the screen is rebuilt", which is what happens now anyway.
         /// </summary>
-        private const long RvaCardBuild = 0x52FA30;
 
         // Prefixed because `Hooks` is a partial class and other files already name this image and
         // namespace under their own class's terms.
@@ -70,10 +70,10 @@ namespace InFalsusChartLoader
         private const string PackNamespace = "ifapp.Game";
 
         /// <summary>`PackVisualMemberLarge._Mf`, the cards of the pack on screen.</summary>
-        private const int CardsField = 0x120;
+        private static int CardsField = 0x120;
 
         /// <summary>`PackSongCardMember._if`, the song view model the card was built from.</summary>
-        private const int CardViewModel = 0x78;
+        private static int CardViewModel = 0x78;
 
         /// <summary>
         /// `PackVisualMemberLarge.dataAccess`, which the card's build has to be handed.
@@ -82,13 +82,35 @@ namespace InFalsusChartLoader
         /// to the card build it performs inline, and the card's build only forwards it to `_qc`, which
         /// reads the song data and the localisation table out of it.
         /// </summary>
-        private const int PackDataAccess = 0xF0;
+        private static int PackDataAccess = 0xF0;
 
         /// <summary>`_SH._WEb`, the song record — embedded, so this is its address and not a pointer.</summary>
-        private const int ViewModelSong = 0x10;
+        private static int ViewModelSong = 0x10;
+
+        private static bool _fieldsResolved;
+
+        /// <summary>
+        /// Both of the above, asked of the running game by name, once.
+        ///
+        /// They are fields of *this build of the game*, not of this mod: a patch moves them and the
+        /// mod reads a plausible-looking value from the wrong place rather than failing. The
+        /// constants are what this build was reversed with and nothing more (see <see cref="Offsets"/>).
+        /// </summary>
+        private static void ResolveFields()
+        {
+            if (_fieldsResolved) return;
+
+            PackDataAccess = FieldResolver.Field("PackVisualMemberLarge", "dataAccess", PackDataAccess);
+            ViewModelSong = FieldResolver.Field("_SH", "_WEb", ViewModelSong);
+            CardsField = FieldResolver.Field("PackVisualMemberLarge", "_Mf", CardsField);
+            CardViewModel = FieldResolver.Field("PackSongCardMember", "_if", CardViewModel);
+            ViewModelDifficulty = FieldResolver.Field("_SH", "_xEb", ViewModelDifficulty);
+
+            _fieldsResolved = true;
+        }
 
         /// <summary>`_SH._xEb`, the difficulty the card is showing.</summary>
-        private const int ViewModelDifficulty = 0x50;
+        private static int ViewModelDifficulty = 0x50;
 
         /// <summary>
         /// `void _vc(ChartDifficultyFlag)`.
@@ -115,8 +137,230 @@ namespace InFalsusChartLoader
         /// <summary>Difficulty applies seen on the pack screen, and cards rebuilt because of one.</summary>
         internal static long PackDifficultyCalls, PackCardsRebuilt;
 
+        // ------------------------------------------------------------------------------------------
+        // The pack's picture: `packToAssets[PackInfo.Id]`, read through one shared accessor.
+        // ------------------------------------------------------------------------------------------
+
+        /// <summary>
+        /// `void accessor(SongSelectPackAssets[] table, SongSelectPackAssets* destination, uint index)`
+        /// — IL2CPP's shared element accessor for this array type, which copies one 216-byte row out.
+        ///
+        /// <b>Every</b> read of a pack's row goes through it — thirteen call sites, every member of the
+        /// pack screen (`PackVisualMemberLarge._Ef` and its siblings, `PackVisualMemberSmall._bC`,
+        /// `PackOutlineMember`, `PackDLCVisualMemberSingle`, `DLCNotificationContainer`,
+        /// `PackSelectButtonContainer.Update`). A row is a pack's whole look: the large card, the small
+        /// card, the backing image, the outline.
+        /// </summary>
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate void PackRowFn(IntPtr table, IntPtr destination, uint index);
+
+        private static NativeHook<PackRowFn> _packRow;
+        private static PackRowFn _packRowTramp;
+
+        /// <summary>The row this mod's pack is answered with; -1 until it has been resolved.</summary>
+        private static int _rowSource = -1;
+
+        private static bool InstallPackRow()
+        {
+            int candidates = 0;
+            IntPtr target = RowAccessor(ref candidates);
+            if (target == IntPtr.Zero)
+            {
+                Diagnostics.Info($"the pack row accessor: {candidates} candidate(s) matched");
+                Diagnostics.Error("the pack row accessor could not be located in this build; the custom " +
+                                  "pack will wear whatever this build puts in its row");
+                return false;
+            }
+
+            byte[] prologue = Prologue(target);
+            _packRow = new NativeHook<PackRowFn>
+            {
+                Target = target,
+                Detour = (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, uint, void>)&PackRowDetour,
+            };
+            _packRow.Attach();
+            _packRowTramp = _packRow.Trampoline;
+            Diagnostics.Info($"the pack row accessor is at 0x{target.ToInt64():X}");
+            return Landed(Hook.PackRow, target, prologue);
+        }
+
+        /// <summary>
+        /// Answers the read for this mod's pack with the In Falsus pack's row.
+        ///
+        /// This is the whole of how the custom pack gets its look, and it is deliberately a
+        /// substitution at the read rather than a row this mod keeps writing: a pack's picture is
+        /// whatever this accessor returns for its id, so the mod's pack is given the row of the pack it
+        /// copies — the In Falsus one — at the moment the picture is fetched.
+        ///
+        /// Keeping a row of its own was tried and does not work in this build, measured from the running
+        /// game: the DLC layer creates its own `PackSelectSceneAssets` instances at runtime, hands one to
+        /// the pack screen's members, and rewrites rows 0, 1 and 7 of that copy with the unowned/DLC art —
+        /// including the row of a pack it has no record of (this mod's). A row kept in one table is
+        /// therefore not the row the screen reads, and keeping "the In Falsus row" was worse than
+        /// useless: in the copy the screen reads, that row had itself been rewritten, so the pack wore
+        /// the unowned look faithfully and forever.
+        /// </summary>
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void PackRowDetour(IntPtr table, IntPtr destination, uint index)
+        {
+            if (SongCatalog.CustomPackId >= 0 && index == (uint)SongCatalog.CustomPackId)
+            {
+                if (_rowSource < 0) _rowSource = ResolveSourceRow();
+                if (_rowSource >= 0) index = (uint)_rowSource;
+            }
+
+            _packRowTramp(table, destination, index);
+        }
+
+        /// <summary>
+        /// The row this mod's pack is answered with — the same row it copied its look from when the
+        /// table was grown. Asked of the table the mod grew, not written down: which pack that is
+        /// follows the game's own pack list, and a number typed here would be right only until the
+        /// next update moves it (the lesson the hardcoded pack id 7 taught).
+        /// </summary>
+        private static int ResolveSourceRow()
+        {
+            if (!PackSetup.TryGetVisuals(out IntPtr canonical) || !Memory.LooksLikeObject(canonical))
+                return -1;
+
+            int offset = PackSetup.VisualsTableOffset;
+            if (offset <= 0) return -1;
+
+            IntPtr table = Memory.Ptr(canonical + offset);
+            int count = Memory.LooksLikeObject(table) ? Memory.I32(table + Offsets.Runtime.ArrayLength) : 0;
+            int stride = Stride(table, count);
+            return stride <= 0 ? -1 : SourceRow(table, count, stride);
+        }
+
+        /// <summary>
+        /// Finds that accessor in the loaded game.
+        ///
+        /// It has no name to resolve by: it is not a method the game declares but an IL2CPP
+        /// instantiation generated for this one array type, and it is not in the interop assemblies
+        /// either. What is unique about it is its shape — the bounds check against the array length,
+        /// then the multiply by the row size, 216 — so it is found by those bytes, and the search
+        /// refuses to answer unless exactly one place matches.
+        ///
+        /// The bytes are the ones the disassembly shows, copied from the image rather than read off the
+        /// listing: the first version of this search was written from the listing and matched nothing,
+        /// because three encodings had been assumed rather than looked at — `cmp` is `3B` here and not
+        /// `39`, the branch is a near `0F 83` and not a short `73`, and the multiply's REX prefix is
+        /// `49` and not `4C`. Measured offline against this build: one match, at RVA 0xCF40.
+        ///
+        /// Where to look is asked of the module: the executable sections are read out of its own PE
+        /// headers, so no address and no section layout is written down here.
+        /// </summary>
+        private static IntPtr RowAccessor(ref int candidates)
+        {
+            // sub rsp, 28h | cmp r8d, [rcx+18h] | jae rel32
+            byte[] head = { 0x48, 0x83, 0xEC, 0x28, 0x44, 0x3B, 0x41, 0x18, 0x0F, 0x83 };
+            // imul rax, r8, 0D8h — right after the branch. `head` already carries the branch's two
+            // opcode bytes, so the four bytes of its displacement are all that is left to skip.
+            byte[] tail = { 0x49, 0x69, 0xC0, 0xD8, 0x00, 0x00, 0x00 };
+            const int BranchDisplacement = 4;
+
+            byte* image = (byte*)GameAssembly.Base;
+            if (image == null || *(ushort*)image != 0x5A4D) return IntPtr.Zero;      // "MZ"
+
+            byte* pe = image + *(int*)(image + 0x3C);
+            if (*(uint*)pe != 0x00004550) return IntPtr.Zero;                       // "PE\0\0"
+
+            int sections = *(ushort*)(pe + 6);
+            byte* section = pe + 24 + *(ushort*)(pe + 20);
+            IntPtr found = IntPtr.Zero;
+
+            for (int s = 0; s < sections; s++, section += 40)
+            {
+                // Only what the loader itself marked executable.
+                if ((*(uint*)(section + 36) & 0x20000000) == 0) continue;
+
+                uint size = *(uint*)(section + 8);
+                uint address = *(uint*)(section + 12);
+                if (size == 0 || address == 0) continue;
+
+                byte* start = image + address;
+                byte* end = start + size;
+                for (byte* p = start; p + head.Length + BranchDisplacement + tail.Length <= end; p++)
+                {
+                    bool match = true;
+                    for (int i = 0; i < head.Length && match; i++) match = p[i] == head[i];
+                    if (!match) continue;
+
+                    byte* mul = p + head.Length + BranchDisplacement;
+                    for (int i = 0; i < tail.Length && match; i++) match = mul[i] == tail[i];
+                    if (!match) continue;
+
+                    candidates++;
+                    if (candidates > 1) return IntPtr.Zero;   // ambiguous — do not pick one
+                    found = (IntPtr)p;
+                }
+            }
+
+            return found;
+        }
+
+        /// <summary>
+        /// Which shipped row a new pack copies its look from: <b>the first one the game draws</b> — the
+        /// entry after the reserved one at the head of the list, which is the In Falsus pack — or, if
+        /// that one has nothing to draw with, the first row after it that has. -1 when none does.
+        ///
+        /// The row is found, not named: which pack Is In Falsus follows the game's pack list, so it is
+        /// read there rather than written here.
+        /// </summary>
+        internal static int SourceRow(IntPtr table, int count, int stride)
+        {
+            if (stride <= 0 || count <= 0) return -1;
+
+            for (int i = 1; i < count; i++)
+                if (i != SongCatalog.CustomPackId && Drawable(table, count, stride, i)) return i;
+
+            return -1;
+        }
+
+        /// <summary>A row's size in bytes, measured off the array rather than assumed.</summary>
+        private static int Stride(IntPtr table, int count)
+        {
+            if (!Memory.LooksLikeObject(table) || count <= 0) return 0;
+
+            try
+            {
+                return (int)(Il2CppInterop.Runtime.IL2CPP.il2cpp_array_get_byte_length(table) / count);
+            }
+            catch (Exception)
+            {
+                return 0;
+            }
+        }
+
+        /// <summary>
+        /// Whether a row has a material in a slot the pack screen draws from — the large card (0x20) or
+        /// the small one (0x40). Any, not every: rows in this build differ in which slots they carry
+        /// (measured: rows 0 and 1 have a first material and no backing or unowned one).
+        /// </summary>
+        private static bool Drawable(IntPtr table, int count, int stride, int id)
+        {
+            IntPtr row = Row(table, count, stride, id);
+            if (row == IntPtr.Zero) return false;
+
+            return Memory.LooksLikeObject(Memory.Ptr(row + 0x20))
+                || Memory.LooksLikeObject(Memory.Ptr(row + 0x40));
+        }
+
+        /// <summary>The row an id selects — `packToAssets[id]`, and row zero for an id past the end.</summary>
+        private static IntPtr Row(IntPtr table, int count, int stride, int id)
+        {
+            if (stride <= 0 || count <= 0) return IntPtr.Zero;
+            if (id < 0 || id >= count) id = 0;
+
+            return table + Offsets.Runtime.ArrayDataOffset + id * stride;
+        }
+
         private static bool InstallPackVisual()
         {
+            // Before `_vc`: the row accessor answers for this mod's pack from the first frame the screen
+            // can draw, and `_vc` is what makes a difficulty change reach the cards afterwards.
+            bool row = InstallPackRow();
+
             IntPtr info = MethodResolver.MethodInfoByRuntime("PackSongCardMember", "_pc", PackImage, PackNamespace);
             if (info == IntPtr.Zero)
             {
@@ -132,9 +376,9 @@ namespace InFalsusChartLoader
             }
 
             // By runtime walk, like the other methods on this screens' classes: the generated store
-            // answers zero for methods nothing has touched, and a zero there falls back to a pinned
-            // address silently. There is no RVA fallback here — a wrong address would be a patch into
-            // the middle of whatever now occupies it, and `Attach()` reports nothing either way.
+            // answers zero for methods nothing has touched, so the walk is what reaches them. A miss
+            // leaves the hook uninstalled and says so; `Attach()` would report nothing either way, so
+            // a wrong address here would be a patch into the middle of whatever now occupies it.
             IntPtr target = MethodResolver.ByRuntime("PackVisualMemberLarge", "_vc", PackImage, PackNamespace);
             if (target == IntPtr.Zero)
             {
@@ -152,11 +396,15 @@ namespace InFalsusChartLoader
             _packDifficulty.Attach();
             _packDifficultyTramp = _packDifficulty.Trampoline;
             Diagnostics.Info("PackVisualMemberLarge._vc hooked");
-            return Landed(Hook.PackVisual, target, prologue);
+            return Landed(Hook.PackVisual, target, prologue) & row;
         }
 
         private static void DetachPackVisual()
         {
+            _packRow?.Detach();
+            _packRow = null;
+            _packRowTramp = null;
+
             _packDifficulty?.Detach();
             _packDifficulty = null;
             _packDifficultyTramp = null;
@@ -207,6 +455,15 @@ namespace InFalsusChartLoader
         /// </summary>
         private static bool CardsForAnotherDifficulty(IntPtr packVisual, byte difficulty)
         {
+            // Asked for here, not further down. This is the first line in the file that reads one of
+            // the game's fields, and the only other places that resolve them (`Ours`, `RebuildCards`)
+            // are reached *after* the list has been read below — so without this call the very first
+            // question ("were these cards built for another difficulty?") would be asked with the
+            // constant this build was reversed with. On a build that moved `_Mf` that read fails,
+            // this returns, and neither the rebuild nor the name lookups ever run — silently, because
+            // the failure looks exactly like "nothing to do".
+            ResolveFields();
+
             if (!Memory.TryList(Memory.Ptr(packVisual + CardsField), out IntPtr items, out int count))
                 return false;
 
@@ -232,6 +489,7 @@ namespace InFalsusChartLoader
         {
             if (_buildCard == null) return;
 
+            ResolveFields();
             IntPtr dataAccess = Memory.Ptr(packVisual + PackDataAccess);
             if (!Memory.LooksLikeObject(dataAccess)) return;
 
@@ -266,6 +524,7 @@ namespace InFalsusChartLoader
 
             // The record is embedded in the view model, so its address is the view model plus the
             // field's offset — and the base name is inside it, which is what the catalogue matches on.
+            ResolveFields();
             return JacketCatalog.IsOurs(viewModel + ViewModelSong);
         }
 

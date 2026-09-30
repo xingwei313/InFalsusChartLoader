@@ -75,6 +75,28 @@ namespace InFalsusChartLoader
         }
 
         /// <summary>
+        /// An IL2CPP array's total byte length, or 0 when it cannot be had.
+        ///
+        /// This is what bounds a walk over an array of *structs*: the element stride is measured
+        /// (<see cref="FieldResolver.ElementSize"/>) rather than assumed, and a walk bounded by the
+        /// allocation cannot run past it even when that measurement fell back to a constant.
+        /// </summary>
+        internal static long ArrayBytes(IntPtr array)
+        {
+            if (!LooksLikeObject(array)) return 0;
+
+            try
+            {
+                return Il2CppInterop.Runtime.IL2CPP.il2cpp_array_get_byte_length(array);
+            }
+            catch (Exception e)
+            {
+                Diagnostics.Warn($"an array's byte length could not be read: {Diagnostics.Describe(e)}");
+                return 0;
+            }
+        }
+
+        /// <summary>
         /// A `List&lt;T&gt;`'s backing array and count.
         ///
         /// The list is read through its own layout rather than through an indexer: this mod runs

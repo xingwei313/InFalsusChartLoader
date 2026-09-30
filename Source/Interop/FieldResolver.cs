@@ -53,15 +53,29 @@ namespace InFalsusChartLoader
                 return fallback;
             }
 
-            if (offset == fallback)
+            return Adopt($"{typeName}.{fieldName}", offset, fallback);
+        }
+
+        /// <summary>
+        /// Takes the game's answer and says what changed.
+        ///
+        /// A resolved value that disagrees with the fallback is adopted: the game is the authority
+        /// on its own layout, and the constant is only what this build was reversed with. The
+        /// disagreement is logged, because that line is the only thing that tells "the game moved
+        /// this" apart from "the mod is reading the wrong place".
+        /// </summary>
+        private static int Adopt(string label, int resolved, int fallback)
+        {
+            if (resolved == fallback)
             {
                 _agreed++;
                 return fallback;
             }
 
             _moved++;
-            Diagnostics.Warn($"{typeName}.{fieldName} is at 0x{offset:X}, not 0x{fallback:X}; using the game's");
-            return offset;
+            Diagnostics.Warn($"{label} has moved to 0x{resolved:X} " +
+                             $"(this build was reversed with 0x{fallback:X}); using the game's");
+            return resolved;
         }
 
         /// <summary>
@@ -73,6 +87,54 @@ namespace InFalsusChartLoader
         /// </summary>
         internal static int Lookup(string typeName, string fieldName) =>
             TryField(typeName, fieldName, out int offset) ? offset : -1;
+
+        // ---------------------------------------------------------------- sizes
+
+        private static readonly Dictionary<string, int> Measured = new Dictionary<string, int>();
+
+        /// <summary>
+        /// The size of an IL2CPP array's elements, taken from the array itself.
+        ///
+        /// A struct's size is not a field, so it has no name to look up — but an array of them
+        /// carries it: its byte length is its element count times the element size. This is the
+        /// one number a game update that changes a struct's shape cannot hide, and it is the
+        /// reason no stride in this mod is trusted to a constant.
+        ///
+        /// Only a measurement is cached: caching the fallback would make the first unreadable
+        /// array the answer for the rest of the session, and the fallback is exactly the value a
+        /// build that moved it must be caught on.
+        /// </summary>
+        internal static int ElementSize(IntPtr array, string label, int fallback)
+        {
+            if (Measured.TryGetValue(label, out int known)) return known;
+
+            int size = fallback;
+            bool measured = false;
+            try
+            {
+                if (Memory.LooksLikeObject(array))
+                {
+                    uint length = Il2CppInterop.Runtime.IL2CPP.il2cpp_array_length(array);
+                    uint bytes = length == 0
+                        ? 0
+                        : Il2CppInterop.Runtime.IL2CPP.il2cpp_array_get_byte_length(array);
+
+                    if (length > 0 && length <= 1_000_000 && bytes > 0 && bytes % length == 0)
+                    {
+                        size = Adopt(label, (int)(bytes / length), fallback);
+                        measured = true;
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Diagnostics.Warn($"{label} could not be measured: {Diagnostics.Describe(e)}");
+                _unresolved++;
+            }
+
+            if (measured) Measured[label] = size;
+            return size;
+        }
 
         /// <summary>
         /// The class pointer for a generated type, so a class can be reached by name rather than
@@ -131,9 +193,13 @@ namespace InFalsusChartLoader
                     IntPtr info = (IntPtr)pointer.GetValue(null);
                     if (info == IntPtr.Zero) continue;
 
-                    offset = type.IsValueType
-                        ? (int)Il2CppInterop.Runtime.IL2CPP.il2cpp_field_get_offset(info) - ObjectHeader
-                        : (int)Il2CppInterop.Runtime.IL2CPP.il2cpp_field_get_offset(info);
+                    // Whether to correct for the object header is asked of **IL2CPP**, not of the
+                    // generated `System.Type`: Cpp2IL emits the game's structs as classes, so
+                    // `Type.IsValueType` is false for exactly the types that need the correction — and
+                    // the failure is silent and uniform (every field of every struct comes back
+                    // 0x10 too high), which reads like "the game moved everything".
+                    offset = (int)Il2CppInterop.Runtime.IL2CPP.il2cpp_field_get_offset(info) -
+                             (IsValueType(ClassOf(type)) ? ObjectHeader : 0);
                     return true;
                 }
             }
@@ -143,6 +209,41 @@ namespace InFalsusChartLoader
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// The IL2CPP class of a generated `System.Type`, or zero.
+        /// </summary>
+        private static IntPtr ClassOf(Type type)
+        {
+            try
+            {
+                FieldInfo pointer = typeof(Il2CppInterop.Runtime.Il2CppClassPointerStore<>)
+                    .MakeGenericType(type)
+                    .GetField("NativeClassPtr", BindingFlags.Public | BindingFlags.Static);
+
+                return pointer == null ? IntPtr.Zero : (IntPtr)pointer.GetValue(null);
+            }
+            catch (Exception)
+            {
+                return IntPtr.Zero;      // a generic definition has no class; nothing to correct for
+            }
+        }
+
+        /// <summary>
+        /// Whether an IL2CPP class is a value type — a struct's field offsets are reported against the
+        /// object header, because that is where they sit once the struct is boxed, while every offset
+        /// this mod uses is relative to the struct itself.
+        ///
+        /// Asked the way IL2CPP defines it rather than through the generated type: a value type's
+        /// parent is <c>System.ValueType</c>.
+        /// </summary>
+        private static bool IsValueType(IntPtr klass)
+        {
+            IntPtr parent = Il2CppInterop.Runtime.IL2CPP.il2cpp_class_get_parent(klass);
+            if (parent == IntPtr.Zero) return false;
+
+            return Il2CppInterop.Runtime.IL2CPP.il2cpp_class_get_name_(parent) == "ValueType";
         }
 
         /// <summary>

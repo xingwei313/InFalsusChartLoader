@@ -7,9 +7,6 @@ namespace InFalsusChartLoader
 {
     internal static unsafe partial class Hooks
     {
-        /// <summary>public static _R _VA(string) — the chart loader, by name.</summary>
-        private const long RvaVa = 0x53DB30;
-
         /// <summary>
         /// `_s._VA(string name) -> _R`
         ///
@@ -25,7 +22,7 @@ namespace InFalsusChartLoader
 
         private static bool InstallChartLoad()
         {
-            IntPtr target = MethodResolver.ByName("_s", "_VA", RvaVa);
+            IntPtr target = MethodResolver.ByName("_s", "_VA");
             if (target == IntPtr.Zero) return false;
 
             byte[] prologue = Prologue(target);

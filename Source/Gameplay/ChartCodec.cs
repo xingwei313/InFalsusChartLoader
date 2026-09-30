@@ -23,12 +23,9 @@ namespace InFalsusChartLoader
     /// </summary>
     internal static unsafe class ChartCodec
     {
-        /// <summary>`_S._Gab`.</summary>
-        private const long RvaGab = 0x539C90;
-
-        /// <summary>`_S._hab` — the empty chart.</summary>
-        private const long RvaHab = 0x53AC00;
-
+        /// <summary>
+        /// `_S._Gab` (the chart decoder) and `_S._hab` (the empty chart), both resolved by name.
+        /// </summary>
         /// <summary>
         /// `_S._Gab(ReadOnlySpan&lt;byte&gt;*, string, MethodInfo*) -> ValueTuple&lt;…&gt;*`
         ///
@@ -62,7 +59,7 @@ namespace InFalsusChartLoader
         /// <summary>Finds the decoder. False when it cannot be reached, in which case nothing imports.</summary>
         internal static bool Resolve()
         {
-            IntPtr p = MethodResolver.ByName("_S", "_Gab", RvaGab);
+            IntPtr p = MethodResolver.ByName("_S", "_Gab");
             if (p == IntPtr.Zero) return false;
 
             _gab = (delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, IntPtr, IntPtr>)p;
@@ -79,7 +76,7 @@ namespace InFalsusChartLoader
 
             // Not fatal on its own — without it a chart that fails at play time falls through to the
             // game's loader instead of playing empty — so it is reported and the mod carries on.
-            IntPtr hab = MethodResolver.ByName("_S", "_hab", RvaHab);
+            IntPtr hab = MethodResolver.ByName("_S", "_hab");
             _hab = hab == IntPtr.Zero
                 ? null
                 : (delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr>)hab;
@@ -246,6 +243,7 @@ namespace InFalsusChartLoader
         /// </summary>
         private static void MeasureNoteSize(IntPtr items, int count)
         {
+            ResolveNoteFields();
             try
             {
                 IntPtr array = items - Offsets.Runtime.ArrayDataOffset;
@@ -263,6 +261,27 @@ namespace InFalsusChartLoader
             {
                 Diagnostics.Warn($"could not measure the note stride: {Diagnostics.Describe(e)}");
             }
+        }
+
+        private static bool _offsetsResolved;
+
+        /// <summary>
+        /// The four `_fA` field offsets, asked of the running game by name, once.
+        ///
+        /// A note record is a struct, so a patch that changes its shape moves its fields — and this is
+        /// read for every note of every chart, which makes a stale offset here a wrong judgement
+        /// rather than a visible failure. The constant is only what this build was reversed with.
+        /// </summary>
+        private static void ResolveNoteFields()
+        {
+            if (_offsetsResolved) return;
+
+            Offsets.Note.Side = FieldResolver.Field("_fA", "_Ae", Offsets.Note.Side);
+            Offsets.Note.Type = FieldResolver.Field("_fA", "_be", Offsets.Note.Type);
+            Offsets.Note.StartMs = FieldResolver.Field("_fA", "_Be", Offsets.Note.StartMs);
+            Offsets.Note.EndMs = FieldResolver.Field("_fA", "_ce", Offsets.Note.EndMs);
+
+            _offsetsResolved = true;
         }
     }
 }

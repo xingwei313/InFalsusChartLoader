@@ -9,25 +9,24 @@ namespace InFalsusChartLoader
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Two routes, because neither is reliable on its own:
+    /// One route: the Cpp2IL interop assembly keeps a hidden static field per method holding the
+    /// runtime MethodInfo*, whose first field is the method pointer. That assembly is generated from
+    /// the game that is installed, so a name follows the game across updates; an address does not.
     /// </para>
-    /// <list type="bullet">
-    /// <item><description>
-    /// The Cpp2IL interop assembly keeps a hidden static field per method holding the runtime
-    /// MethodInfo*, whose first field is the method pointer. This survives game updates that move
-    /// functions around, but the field is only filled in once the method has been reached by
-    /// il2cpp_codegen_initialize_method.
-    /// </description></item>
-    /// <item><description>
-    /// The RVA from dump.cs, relocated against the real module base. Pinned to this build.
-    /// </description></item>
-    /// </list>
+    /// <para>
+    /// There is deliberately no fallback to a reversed RVA. There used to be, and it was not a safety
+    /// net: when the name lookup failed — the only signal that the game has moved something — the
+    /// stale RVA was patched anyway and the log said the hook was in place. The failure therefore read
+    /// as success, the detour was never entered, and the counter that would have shown it sat at zero
+    /// looking exactly like "the game never calls this". That cost two rounds on
+    /// <c>AddressableHandleAutoReleaser._MIA</c> (`CHARTLOADER_HANDOFF_V6` §2–§4). A name that does
+    /// not resolve is a fact the run has to hear.
+    /// </para>
     /// <para>
     /// A name is not enough when the method is overloaded, because this takes the first method it
-    /// finds with that name. Both methods this mod resolves — <c>_s._VA</c> and <c>_S._Gab</c> — were
-    /// checked against the dump and are unique, so a name does settle them; if either ever gains an
-    /// overload, the sibling mod's <c>BySignature</c> (name plus first parameter type) is the shape
-    /// to bring over rather than a guess at which overload came first.
+    /// finds with that name. The methods this mod resolves by name were each checked against the dump
+    /// and are unique; if one ever gains an overload, the sibling mod's <c>BySignature</c> (name plus
+    /// first parameter type) is the shape to bring over rather than a guess at which came first.
     /// </para>
     /// </remarks>
     internal static unsafe class MethodResolver
@@ -36,10 +35,9 @@ namespace InFalsusChartLoader
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
 
         /// <summary>
-        /// A method's native address: the runtime MethodInfo if it can be found, otherwise the RVA.
-        /// Zero when neither works.
+        /// A method's native address, by name, or zero — and a line in the log either way.
         /// </summary>
-        internal static IntPtr ByName(string typeName, string methodName, long rva)
+        internal static IntPtr ByName(string typeName, string methodName)
         {
             IntPtr p = ViaMethodInfo(typeName, methodName);
             if (p != IntPtr.Zero)
@@ -48,16 +46,8 @@ namespace InFalsusChartLoader
                 return p;
             }
 
-            p = GameAssembly.FromRva(rva);
-            if (p == IntPtr.Zero)
-            {
-                Diagnostics.Warn($"could not resolve {typeName}.{methodName}");
-                return IntPtr.Zero;
-            }
-
-            Diagnostics.Warn($"{typeName}.{methodName} -> 0x{p.ToInt64():X} (RVA 0x{rva:X}; " +
-                             "the game may have been patched since this RVA was read)");
-            return p;
+            Diagnostics.Error($"{typeName}.{methodName}: no method by that name in this build");
+            return IntPtr.Zero;
         }
 
         /// <summary>
@@ -115,14 +105,14 @@ namespace InFalsusChartLoader
         /// type parameter has a type with `ContainsGenericParameters`, and `FieldInfo.GetValue` on one
         /// raises `InvalidOperationException: Late bound operations cannot be performed on fields with
         /// types for which Type.ContainsGenericParameters is true`. <see cref="MethodInfoOf"/> catches
-        /// that and answers zero, and <see cref="ByName"/> then falls back to the RVA — a fixed address
-        /// in one build of the game.
+        /// that and answers zero, and <see cref="ByName"/> reports the miss — there is no RVA to fall
+        /// back to any more, and that is the point (see its remarks).
         /// </para>
         /// <para>
         /// That is exactly what happened to `AddressableHandleAutoReleaser._MIA`, and it is worth
-        /// stating plainly because of how it failed: the fallback was logged as a warning, the hook was
-        /// installed at whatever occupied that address, `Attach()` reported nothing wrong, and the
-        /// detour was simply never entered — so the counter read zero for the rest of the run and
+        /// stating plainly because of how it failed: the miss was papered over with a reversed RVA, the
+        /// hook was installed at whatever occupied that address, `Attach()` reported nothing wrong, and
+        /// the detour was simply never entered — so the counter read zero for the rest of the run and
         /// looked identical to "the game never calls this".
         /// </para>
         /// <para>

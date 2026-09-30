@@ -30,14 +30,15 @@ namespace InFalsusChartLoader
         /// <summary>Where the payload sits inside `SongSelectScene`'s statics.</summary>
         private const int StaticPayload = 0x0;
 
-        /// <summary>`_nG._LYA` — the selected song, embedded, so this is its address rather than a pointer to it.</summary>
-        private const int PayloadSong = 0x168;
-
-        /// <summary>`_nG._mYA` — the selected difficulty, a one-byte `ChartDifficultyFlag`.</summary>
-        private const int PayloadDifficulty = 0x1A8;
+        /// <summary>
+        /// `_nG._LYA` (the selected song, embedded — this is its address, not a pointer to it) and
+        /// `_nG._mYA` (its difficulty, one byte). Resolved by name where the payload is reached.
+        /// </summary>
+        private static int PayloadSong = 0x168;
+        private static int PayloadDifficulty = 0x1A8;
 
         /// <summary>`SongInfo.ChartInfos` — read only to tell a filled payload from a zeroed one.</summary>
-        private const int SongInfoCharts = 0x18;
+        private static int SongInfoCharts => Offsets.Song.Charts;
 
         /// <summary>The four flags, in difficulty order. The same set the chart records are written with.</summary>
         private static readonly byte[] DifficultyFlags = { 1, 2, 4, 8 };
@@ -131,10 +132,11 @@ namespace InFalsusChartLoader
 #endif
 
         /// <summary>`SongSelectScene._sr` — the selected song, beside the difficulty on the scene.</summary>
-        private const int SelectedSong = 0x194;
+        /// <summary>`SongSelectScene._sr` — resolved with the payload, see the resolve site.</summary>
+        private static int SelectedSong = 0x194;
 
         /// <summary>`SongSelectScene._Sr` — the difficulty the player has selected, on the scene itself.</summary>
-        private const int SceneDifficulty = 0x196;
+        private static int SceneDifficulty = 0x196;
 
         private static IntPtr _songSelectClass;
 
@@ -338,6 +340,12 @@ namespace InFalsusChartLoader
                                  "will not be known");
                 return IntPtr.Zero;
             }
+
+            // The payload's own shape, asked of the game once, alongside the static it lives in.
+            PayloadSong = FieldResolver.Field("_nG", "_LYA", PayloadSong);
+            PayloadDifficulty = FieldResolver.Field("_nG", "_mYA", PayloadDifficulty);
+            SelectedSong = FieldResolver.Field("SongSelectScene", "_sr", SelectedSong);
+            SceneDifficulty = FieldResolver.Field("SongSelectScene", "_Sr", SceneDifficulty);
 
             return _payload = statics + FieldResolver.Field("SongSelectScene", "_xr", StaticPayload);
         }

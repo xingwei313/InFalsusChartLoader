@@ -5,67 +5,23 @@ using MelonLoader.NativeUtils;
 
 namespace InFalsusChartLoader
 {
+    /// <remarks>
+    /// The two read-only probes: the play gate (`SongSelectScene._sN`) and the scene switch
+    /// (`CoreScene._CB.MoveNext`). Neither substitutes anything — each counts and reports, because
+    /// whether the game took that step cannot be read off the decompilation with confidence and one
+    /// number per step settles it. They are also the two halves of "the button does nothing" against
+    /// "the game started something and stalled".
+    ///
+    /// A third probe used to live here and is gone: the song-select card builder. It was the one
+    /// hook in this mod pinned to a bare RVA, and in the installed build that address belongs to a
+    /// parameterless `_rN()` rather than to any card builder (`MISSING.md` D5), so it patched a
+    /// function it never meant to reach, read four arguments that do not exist, and reported
+    /// `hooked` for all of it — its counter measured calls to the wrong function and could never
+    /// have counted a card. What it was for, "did a custom song reach the song list", the probe
+    /// answers from the table sizes (`_ffb` / `_Efb`) and the pack counters instead.
+    /// </remarks>
     internal static unsafe partial class Hooks
     {
-        /// <summary>
-        /// `SongSelectScene._Jc._Lo`'s sibling: the one that builds a song card and appends it to the
-        /// song-select's display list.
-        ///
-        /// Not a hook this mod needs to *do* anything with — nothing is substituted here. It is the
-        /// only place that can answer, from a run, whether a custom song reached the song list: the
-        /// list is built by a filter that is several optimised branches deep, and whether a song of
-        /// this mod's survives it cannot be read off the decompilation with confidence. Counting the
-        /// cards built for it says the same thing without the ambiguity.
-        /// </summary>
-        private const long RvaSongCard = 0x73EA50;
-
-        /// <summary>
-        /// `void _Go(SongSelectScene self, Il2CppObject* a, SongInfo* b, _Kc* c, MethodInfo*)`.
-        ///
-        /// The second argument is left as a pointer rather than the `int` its first four bytes look
-        /// like, so that this hook can say what it actually received when the third one turns out not
-        /// to be the song record after all.
-        /// </summary>
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        private delegate IntPtr SongCardFn(IntPtr self, IntPtr second, IntPtr songInfo, IntPtr extra);
-
-        private static NativeHook<SongCardFn> _card;
-        private static SongCardFn _cardTramp;
-
-        /// <summary>Cards appended to the song-select list, and how many of them are this mod's.</summary>
-        internal static long CardsBuilt, CardsOurs;
-
-        private static bool InstallSongCard()
-        {
-            // By RVA only: the method is reached through a nested closure class, whose name is not
-            // something to look up, and the address is pinned to this build either way.
-            IntPtr target = GameAssembly.FromRva(RvaSongCard);
-            if (target == IntPtr.Zero)
-            {
-                Diagnostics.Warn($"could not resolve the song card builder (RVA 0x{RvaSongCard:X}); " +
-                                 "is GameAssembly.dll loaded?");
-                return false;
-            }
-
-            byte[] prologue = Prologue(target);
-            _card = new NativeHook<SongCardFn>
-            {
-                Target = target,
-                Detour = (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, IntPtr, IntPtr>)&SongCardDetour,
-            };
-            _card.Attach();
-            _cardTramp = _card.Trampoline;
-            Diagnostics.Info("song card builder hooked");
-            return Landed(Hook.SongCard, target, prologue);
-        }
-
-        private static void DetachSongCard()
-        {
-            _card?.Detach();
-            _card = null;
-            _cardTramp = null;
-        }
-
         /// <summary>
         /// `SongSelectScene._sN()` — the song-select's "may this be started" predicate.
         ///
@@ -291,33 +247,5 @@ namespace InFalsusChartLoader
         /// <summary>`&lt;&gt;1__state` — a generated coroutine's state, at the same offset in all of them.</summary>
         private const int StateField = 0x10;
 
-        /// <summary>Counts the card, then builds it exactly as the game would have.</summary>
-        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-        private static IntPtr SongCardDetour(IntPtr self, IntPtr second, IntPtr songInfo, IntPtr extra)
-        {
-            CardsBuilt++;
-
-            if (!Faulted)
-            {
-                // Deliberately not `Fault`: this is a diagnostic on a hot path, and faulting stops
-                // every detour in the mod — which is what happened the first time this ran, halfway
-                // through a run. A diagnostic that can disable the mod is worse than no diagnostic.
-                //
-                // Named per card it was not: the argument that should be the song record reads as
-                // zero here, for both the second and the third slot, while the card is built from a
-                // real one. So this counts and does not name — and the argument layout wants a proper
-                // look at the call site before anything is built on it again.
-                try
-                {
-                    if (JacketCatalog.IsOurs(songInfo)) CardsOurs++;
-                }
-                catch (Exception e)
-                {
-                    Diagnostics.Warn($"the song card diagnostic failed: {Diagnostics.Describe(e)}");
-                }
-            }
-
-            return _cardTramp(self, second, songInfo, extra);
-        }
     }
 }

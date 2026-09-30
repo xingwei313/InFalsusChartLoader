@@ -35,8 +35,8 @@ namespace InFalsusChartLoader
     /// </summary>
     internal static class JacketCatalog
     {
-        /// <summary>`SongInfo.BaseName`.</summary>
-        private const int SongInfoBaseName = 0x08;
+        /// <summary>`SongInfo.BaseName` — the one resolved set is <see cref="Offsets.Song"/>.</summary>
+        private static int SongInfoBaseName => Offsets.Song.BaseName;
 
         /// <summary>Per song, one material per difficulty. Zero where that difficulty has none.</summary>
         private static readonly Dictionary<string, IntPtr[]> ByBase =
@@ -61,8 +61,8 @@ namespace InFalsusChartLoader
         /// <summary>Handshakes seen. Counted rather than logged — see Find.</summary>
         internal static long Asked, Claimed;
 
-        /// <summary>`SongChartInfo` 的步长（`SongChartInfo[]` 的元素大小）。</summary>
-        private const int ChartInfoSize = 0x30;
+        /// <summary>`SongChartInfo` 的步长 —— 量出来的（`Offsets.Resolve` → `Offsets.Chart.Size`）。</summary>
+        private static int ChartInfoSize => Offsets.Chart.Size;
 
         /// <summary>
         /// 每首自制歌的 `ChartInfos` **数组对象**，用来把 `_ZOA` 收到的那一个元素指针认回来。
