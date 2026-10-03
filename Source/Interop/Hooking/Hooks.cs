@@ -16,18 +16,20 @@ namespace InFalsusChartLoader
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Fourteen detours, installed by seven functions. Eight of them exist because a custom song needs
-    /// the game to accept something it has no path for — a name it will look up, a byte range it
-    /// will read, a picture it cannot reach. Each of those answers, and each is on a hot path, so
-    /// each stays thin. Two more keep one row of the pack screen's visual table the way the mod's
-    /// pack was given it — a copy of the In Falsus pack's — because this build writes those rows at
-    /// runtime, once at each of the two places the screen reads that row from. Two more answer
-    /// nothing: they count and report, because whether the game
-    /// took each step cannot be read off the decompilation with confidence and one number per step
-    /// settles it. The last two do neither — each changes what the game does around a call it is
-    /// making, so that a difficulty change reaches the pictures. One widens the song-select's own
-    /// reload to include a difficulty change; the other rebuilds the pack screen's cards, which that
-    /// screen never asks the game to rebuild.
+    /// Seventeen detours, installed by eight functions. Eight of them exist because a custom song
+    /// needs the game to accept something it has no path for — a name it will look up, a byte range
+    /// it will read, a picture it cannot reach. Each of those answers, and each is on a hot path, so
+    /// each stays thin. One more answers for this mod's pack at the single accessor every read of a
+    /// pack's row of visuals goes through, giving it the In Falsus pack's row. Two more answer
+    /// nothing: they count and report, because whether the game took each step cannot be read off
+    /// the decompilation with confidence and one number per step settles it. Two do neither — each
+    /// changes what the game does around a call it is making, so that a difficulty change reaches
+    /// the pictures: one widens the song-select's own reload to include a difficulty change, the
+    /// other rebuilds the pack screen's cards, which that screen never asks the game to rebuild.
+    /// And four keep the custom songs' results out of the game's own save — the two reads of a
+    /// song's record and the one merge, on `GameResultsV4`, answered from a table of this mod's own,
+    /// and the encounter result's writer, whose call is not made at all for a custom play; see
+    /// <see cref="CustomResults"/>.
     /// </para>
     /// <list type="bullet">
     /// <item><description>
@@ -79,6 +81,15 @@ namespace InFalsusChartLoader
     /// game does not re-ask at all when the difficulty changes. The difficulty is taken from this
     /// call, and the cards are rebuilt through the game's own card builder when it moves. See
     /// <c>PackVisualHook</c>.
+    /// </description></item>
+    /// <item><description>
+    /// <b>`GameResultsV4.TryGetResult`</b> (both arities) and <b>`TryUpdate`</b> — the result
+    /// table's two readers and its only writer, answered from a table of this mod's own for the
+    /// songs it imported. The game's own table never sees a custom song's record, which is what
+    /// keeps the game's own save file free of them and what puts them in `IFCL.sav` instead. Beside
+    /// them, <b>`EncounterResults.UpdateEncounterResult`</b> — the settlement's other write, the
+    /// encounter ("回想") result — is dropped for a custom play rather than redirected, so nothing
+    /// of it is kept anywhere. See <see cref="CustomResults"/>.
     /// </description></item>
     /// </list>
     /// <para>
@@ -146,6 +157,7 @@ namespace InFalsusChartLoader
             Count(InstallJacket());
             Count(InstallSongSelect());
             Count(InstallPackVisual());
+            Count(InstallCustomResults());
             Count(InstallPlayGate());
             Count(InstallSceneSwitch());
 
@@ -161,6 +173,7 @@ namespace InFalsusChartLoader
         {
             DetachSceneSwitch();
             DetachPlayGate();
+            DetachCustomResults();
             DetachPackVisual();
             DetachSongSelect();
             DetachJacket();
@@ -220,6 +233,10 @@ namespace InFalsusChartLoader
             SongSelectApply,
             PackVisual,
             PackRow,
+            ResultRead,
+            ResultReadFull,
+            ResultUpdate,
+            EncounterResult,
             PlayGate,
             SceneSwitch,
         }
@@ -270,6 +287,10 @@ namespace InFalsusChartLoader
             Hook.SongSelectApply => "SongSelectScene._MN",
             Hook.PackVisual => "PackVisualMemberLarge._vc",
             Hook.PackRow => "the pack row accessor (SongSelectPackAssets[])",
+            Hook.ResultRead => "GameResultsV4.TryGetResult(song)",
+            Hook.ResultReadFull => "GameResultsV4.TryGetResult(song, full)",
+            Hook.ResultUpdate => "GameResultsV4.TryUpdate",
+            Hook.EncounterResult => "EncounterResults.UpdateEncounterResult",
             Hook.PlayGate => "SongSelectScene._sN",
             Hook.SceneSwitch => "CoreScene._CB.MoveNext",
             _ => "(unknown hook)",

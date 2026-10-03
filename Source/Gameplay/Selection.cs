@@ -89,6 +89,35 @@ namespace InFalsusChartLoader
         }
 
         /// <summary>
+        /// The song the payload names, without asking for the difficulty.
+        ///
+        /// <see cref="TryRead"/> turns the read down unless the difficulty byte is one of the four
+        /// flags, which is right for its callers — they all want the difficulty. This one is for the
+        /// callers that want the song alone, and the gate has to come off for them: measured on this
+        /// build, the play handler writes the selected song into the payload and leaves the
+        /// difficulty byte at zero (the difficulty actually in force lives on the scene — see
+        /// <see cref="FromScene"/>), so a caller that required it would answer "no" for every real
+        /// play. The song itself is the part that is always there.
+        /// </summary>
+        internal static bool TryReadSong(out IntPtr songInfo)
+        {
+            songInfo = IntPtr.Zero;
+
+            IntPtr payload = Payload();
+            if (payload == IntPtr.Zero) return false;
+
+            IntPtr song = payload + PayloadSong;
+
+            // A zeroed payload names no song — id 0 is the empty slot, the same invariant the song
+            // table itself uses — and a song's record always carries its chart array.
+            if (Memory.U16(song) == 0) return false;
+            if (!Memory.LooksLikeObject(Memory.Ptr(song + SongInfoCharts))) return false;
+
+            songInfo = song;
+            return true;
+        }
+
+        /// <summary>
         /// Debug-only: what the payload actually held when this was turned down, once.
         ///
         /// Every claim in this file is about an offset in a structure nothing else in the mod reads,

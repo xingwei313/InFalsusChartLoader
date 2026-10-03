@@ -167,9 +167,10 @@ namespace InFalsusChartLoader
         /// The player's save — `_K._NH`'s singleton, which is the first word of its statics block.
         ///
         /// Read off the game's own use of it rather than from a field name: the play gate reaches it
-        /// as `**(klass + 0xB8)`, and `0xB8` is `Il2CppClass.static_fields`.
+        /// as `**(klass + 0xB8)`, and `0xB8` is `Il2CppClass.static_fields`. Shared with
+        /// <see cref="CustomResults"/>, which needs the same singleton to reach the save container.
         /// </summary>
-        private static IntPtr PlayerSave()
+        internal static IntPtr PlayerSave()
         {
             IntPtr klass = FieldResolver.ClassPointer("_NH");
             if (klass == IntPtr.Zero) return IntPtr.Zero;

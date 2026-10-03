@@ -23,20 +23,25 @@ namespace InFalsusChartLoader
     /// not contain it, which is the visible form of "非法则不导入".
     /// </description></item>
     /// <item><description>
-    /// <b>Hook.</b> Thirteen detours, installed by seven functions before the game can ask for
+    /// <b>Hook.</b> Seventeen detours, installed by eight functions before the game can ask for
     /// anything. Eight of them answer for something — the chart, the audio (a name and a read), and
     /// the pictures (three reference getters and two loaders, all sharing one handshake). One more
     /// answers for this mod's pack at the single place the game reads a pack's row of visuals, giving
     /// it the In Falsus pack's row. Two only
     /// count: the play gate and the scene switch say whether the game took each step, which is not
-    /// something the decompilation can be read for. And two change what the game does around a call
+    /// something the decompilation can be read for. Two change what the game does around a call
     /// it makes, so that a difficulty change reaches the pictures — one on the song select, one on
-    /// the pack screen. See <see cref="Hooks"/>.
+    /// the pack screen. And four keep a custom song's results out of the game's own save: three give
+    /// them a table of their own, and one drops the encounter result the settlement would otherwise
+    /// write. See <see cref="Hooks"/>.
     /// </description></item>
     /// <item><description>
     /// <b>Register.</b> The songs and the pack go into the game's own tables. This waits: both are
     /// Addressables assets that are not loaded when the mod starts, and writing to them before the
-    /// game has them would be writing to nothing.
+    /// game has them would be writing to nothing. The custom results file (`IFCL.sav`) is opened at
+    /// the same moment — its folder is taken off the game's own save file, so the two sit beside
+    /// each other — and its table is prepared for the hooks above to answer from. See
+    /// <see cref="CustomResults"/>.
     /// </description></item>
     /// </list>
     /// </summary>
@@ -188,6 +193,11 @@ namespace InFalsusChartLoader
                     PackSetup.RefreshLookup(packData);
                     PackSetup.SetPackName(SongCatalog.CustomPackId, SongCatalog.PackName);
                 }
+
+                // The custom songs' results go to a save file of their own, and this is the first
+                // moment both halves of that exist: the game's save (for the folder it lives in)
+                // and this mod's songs (for the ids the hooks answer by). See CustomResults.
+                CustomResults.Prepare();
 
 #if DEBUG
                 PackSetup.TryGetVisuals(out IntPtr packAssetsAfter);

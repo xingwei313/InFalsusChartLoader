@@ -208,11 +208,24 @@ namespace InFalsusChartLoader
         /// <summary>
         /// The code pointer of a generic method's compiled instantiation, or zero.
         ///
+        /// The body every reference-type instantiation shares is the one the dumper named
+        /// `&lt;object&gt;`, so the root of the class hierarchy is the right thing to ask for — see
+        /// <see cref="InflatedMethod"/>, which does the work and can be given any type argument.
+        /// </summary>
+        private static IntPtr Inflated(IntPtr klass, IntPtr method, string typeName, string methodName)
+        {
+            IntPtr native = InflatedMethod(klass, method, typeName, methodName, IntPtr.Zero);
+            return native == IntPtr.Zero ? IntPtr.Zero : *(IntPtr*)native;
+        }
+
+        /// <summary>
+        /// The native `MethodInfo` of a generic method's instantiation — the structure itself,
+        /// which is what a caller that means to <i>invoke</i> it needs — or zero.
+        ///
         /// A generics problem, not a version problem: `il2cpp_class_get_methods` reports the
         /// <b>definition</b>, and for a shared generic the definition's own pointer is not where the
         /// callers go. `dump.cs` shows the split plainly for `_MIA`: the definition is `// RVA: -1`
-        /// — no code at all — and its `GenericInstMethod` block lists one instantiation,
-        /// `_MIA&lt;object&gt;`, which is the body every reference-type call reaches.
+        /// — no code at all — and its `GenericInstMethod` block lists the instantiations that exist.
         ///
         /// The runtime can inflate a definition, but only through its own reflection: the native
         /// `MethodInfo` is turned into a `System.Reflection.MethodInfo`, `MakeGenericMethod` is
@@ -221,40 +234,46 @@ namespace InFalsusChartLoader
         /// no direct "inflate this" entry point in the interop's `il2cpp_*` surface — the round trip
         /// is the only route, which is why it reads the way it does.
         ///
-        /// `object` is the type argument because reference-type instantiations share one body and
-        /// `object` is the name the dumper gave it; the root of the class hierarchy is therefore
-        /// also the right thing to ask for.
+        /// <paramref name="typeArgument"/> is the class to instantiate the generic over, or zero for
+        /// the root of <paramref name="klass"/>'s hierarchy — `System.Object`, which is the name the
+        /// dumper gives a shared reference-type instantiation, and therefore what a caller that only
+        /// wants "the body a reference type runs" asks for.
         /// </summary>
-        private static IntPtr Inflated(IntPtr klass, IntPtr method, string typeName, string methodName)
+        internal static IntPtr InflatedMethod(IntPtr klass, IntPtr method, string typeName, string methodName,
+                                              IntPtr typeArgument)
         {
             try
             {
-                // `System.Object` — walk up from a class that certainly exists.
-                IntPtr objectClass = klass;
-                for (IntPtr parent = Il2CppInterop.Runtime.IL2CPP.il2cpp_class_get_parent(objectClass);
-                     parent != IntPtr.Zero; )
+                IntPtr argument = typeArgument;
+                if (argument == IntPtr.Zero)
                 {
-                    objectClass = parent;
-                    parent = Il2CppInterop.Runtime.IL2CPP.il2cpp_class_get_parent(objectClass);
+                    // `System.Object` — walk up from a class that certainly exists.
+                    argument = klass;
+                    for (IntPtr parent = Il2CppInterop.Runtime.IL2CPP.il2cpp_class_get_parent(argument);
+                         parent != IntPtr.Zero; )
+                    {
+                        argument = parent;
+                        parent = Il2CppInterop.Runtime.IL2CPP.il2cpp_class_get_parent(argument);
+                    }
                 }
 
-                IntPtr objectType = Il2CppInterop.Runtime.IL2CPP.il2cpp_type_get_object(
-                    Il2CppInterop.Runtime.IL2CPP.il2cpp_class_get_type(objectClass));
-                if (objectType == IntPtr.Zero)
+                IntPtr argumentType = Il2CppInterop.Runtime.IL2CPP.il2cpp_type_get_object(
+                    Il2CppInterop.Runtime.IL2CPP.il2cpp_class_get_type(argument));
+                if (argumentType == IntPtr.Zero)
                 {
-                    Diagnostics.Warn($"could not get System.Object as a Type for {typeName}.{methodName}");
+                    Diagnostics.Warn($"could not get a Type for the argument of {typeName}.{methodName}");
                     return IntPtr.Zero;
                 }
 
                 // MakeGenericMethod takes a Type[], so one has to be built. The element class is the
                 // class of the Type object just obtained, which is what an array of Type wants.
                 IntPtr typeArrayClass = Il2CppInterop.Runtime.IL2CPP.il2cpp_array_class_get(
-                    Il2CppInterop.Runtime.IL2CPP.il2cpp_object_get_class(objectType), 1);
+                    Il2CppInterop.Runtime.IL2CPP.il2cpp_object_get_class(argumentType), 1);
                 if (typeArrayClass == IntPtr.Zero) return IntPtr.Zero;
 
                 IntPtr arguments = Il2CppInterop.Runtime.IL2CPP.il2cpp_array_new(typeArrayClass, 1);
                 if (arguments == IntPtr.Zero) return IntPtr.Zero;
-                *(IntPtr*)(arguments + Offsets.Runtime.ArrayDataOffset) = objectType;
+                *(IntPtr*)(arguments + Offsets.Runtime.ArrayDataOffset) = argumentType;
 
                 IntPtr reflection = Il2CppInterop.Runtime.IL2CPP.il2cpp_method_get_object(method, klass);
                 if (reflection == IntPtr.Zero)
@@ -293,10 +312,11 @@ namespace InFalsusChartLoader
                     return IntPtr.Zero;
                 }
 
+                string argumentName = Il2CppInterop.Runtime.IL2CPP.il2cpp_class_get_name_(argument) ?? "?";
                 IntPtr code = *(IntPtr*)native;
-                Diagnostics.Info($"  {typeName}.{methodName}<object>: code=0x{code.ToInt64():X} " +
+                Diagnostics.Info($"  {typeName}.{methodName}<{argumentName}>: code=0x{code.ToInt64():X} " +
                                  $"words={JacketFactory.Words(native, 4)}");
-                return code;
+                return native;
             }
             catch (Exception e)
             {

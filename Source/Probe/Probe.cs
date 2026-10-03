@@ -160,6 +160,20 @@ namespace InFalsusChartLoader
             (Hooks.WaitProgress() is string waiting ? $" wait={waiting}" : "") + " " +
             $"jackets={JacketCatalog.Asked}/{JacketCatalog.Claimed} " +
             $"reads={AudioCatalog.Served}/{AudioCatalog.ServedBytes} " +
+            // The custom results: every record read and the ones answered from this mod's own table,
+            // every merge and the ones that landed there, and the writes of `IFCL.sav` that went
+            // through. `ifcl=0/0` with custom songs in the list means the table was never prepared.
+            //
+            // `enc` is the encounter ("回想") write: how many the settlement made, and how many this
+            // mod dropped because the play was its own. On a custom song's settlement the pair should
+            // move together; on a shipped song's, only the first number should.
+            $"ifcl={CustomResults.Reads}/{CustomResults.Served} " +
+            $"upd={CustomResults.Updates}/{CustomResults.Merged} saved={CustomResults.Saves} " +
+            // `late` is the saves that landed while the game's own save still raised — the shape
+            // every save has on the build this was measured on. `saved` counting while `late` does
+            // not is a save that returned cleanly; neither counting is a save that did not land.
+            $"late={CustomResults.Late} " +
+            $"enc={CustomResults.EncounterWrites}/{CustomResults.EncounterDropped} " +
             // The read bookkeeping. `outstanding` is the game's own count of reads handed to the
             // native side and not yet finished: it is the number this mod's leak used to inflate,
             // and it should hover around the few reads actually in flight, not grow with every

@@ -205,6 +205,17 @@ namespace InFalsusChartLoader
         /// <summary>Where in the pack array this mod's pack is inserted. See <see cref="AddPack"/>.</summary>
         private const int CustomPackIndex = 1;
 
+        /// <summary>
+        /// The song ids this run handed out — the slots the appended songs landed in.
+        ///
+        /// A `SongId` is not a name, it is the index of the song's own entry in `allSongInfo`, so
+        /// the id of an appended song is the slot it took and nothing else could be. This set is
+        /// what tells one of those songs apart from a shipped one for the results hooks, which are
+        /// handed a song record and answer by its id (see <see cref="CustomResults"/>): one read
+        /// and one lookup.
+        /// </summary>
+        internal static readonly HashSet<ushort> CustomSongIds = new HashSet<ushort>();
+
         /// <summary>The pack's name in the pack list. The game shows this text.</summary>
         internal const string PackName = "IFCL";
 
@@ -376,6 +387,7 @@ namespace InFalsusChartLoader
                 // with no lookup in between. So the id of an appended song is the slot it landed in,
                 // and any other numbering would have every song resolve to a different song.
                 int id = oldCount + i;
+                CustomSongIds.Add((ushort)id);
                 IntPtr slot = songs + Offsets.Runtime.ArrayDataOffset + (oldCount + i) * SongInfoSize;
 
                 // Start from a real song so every field this mod does not set keeps a value the game
