@@ -130,7 +130,12 @@ namespace InFalsusChartLoader
         internal static bool IsOurs(IntPtr songInfo)
         {
             if (songInfo == IntPtr.Zero) return false;
-            return SongCatalog.CustomSongIds.Contains(Memory.U16(songInfo));
+
+            // The id's offset is asked (`Offsets.Song.Id`), not assumed to be zero: a build that
+            // puts anything ahead of `Id` moves it. Gated as well, because an unresolved offset is
+            // -1 — one byte before the record — and this runs from the results hooks.
+            if (!Offsets.Ready) return false;
+            return SongCatalog.CustomSongIds.Contains(Memory.U16(songInfo + Offsets.Song.Id));
         }
 
         /// <summary>

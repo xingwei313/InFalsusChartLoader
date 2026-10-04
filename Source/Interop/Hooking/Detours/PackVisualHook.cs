@@ -232,11 +232,24 @@ namespace InFalsusChartLoader
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static void PackRowDetour(IntPtr table, IntPtr destination, uint index)
         {
+#if DEBUG
+            RowCalls++;
+            long t0 = Now;
+#endif
             if (SongCatalog.CustomPackId >= 0 && index == (uint)SongCatalog.CustomPackId)
             {
                 if (_rowSource < 0) _rowSource = ResolveSourceRow();
-                if (_rowSource >= 0) index = (uint)_rowSource;
+                if (_rowSource >= 0)
+                {
+                    index = (uint)_rowSource;
+#if DEBUG
+                    RowRedirects++;
+#endif
+                }
             }
+#if DEBUG
+            TicksRow += Now - t0;
+#endif
 
             _packRowTramp(table, destination, index);
         }
@@ -456,6 +469,9 @@ namespace InFalsusChartLoader
             bool rebuild = false;
             if (!Faulted)
             {
+#if DEBUG
+                long t0 = Now;
+#endif
                 try
                 {
                     // Before the body, and both questions have to be asked here: the body is what moves
@@ -468,13 +484,25 @@ namespace InFalsusChartLoader
                 {
                     Fault(Hook.PackVisual, e);
                 }
+#if DEBUG
+                TicksVc += Now - t0;
+#endif
             }
 
             _packDifficultyTramp(self, difficulty, methodInfo);
 
             // Outside the try, like every other detour here: the game's call is made whatever happened
             // above. The rebuild is after it, because what it re-runs reads the state the body just set.
-            if (rebuild) RebuildCards(self);
+            if (rebuild)
+            {
+#if DEBUG
+                long t1 = Now;
+#endif
+                RebuildCards(self);
+#if DEBUG
+                TicksVc += Now - t1;
+#endif
+            }
         }
 
         /// <summary>
@@ -547,8 +575,15 @@ namespace InFalsusChartLoader
         /// <summary>One card of the list, when it is one of this mod's songs'.</summary>
         private static bool Ours(IntPtr items, int index, out IntPtr card, out IntPtr viewModel)
         {
-            card = Memory.Ptr(items + index * IntPtr.Size);
+            card = IntPtr.Zero;
             viewModel = IntPtr.Zero;
+
+            // First, before either resolved field below is read. Both callers ask for them before
+            // calling this today; this is so that the next caller cannot forget — an unresolved
+            // offset is -1, and the read would be aimed one byte before the card.
+            if (!ResolveFields()) return false;
+
+            card = Memory.Ptr(items + index * IntPtr.Size);
             if (!Memory.LooksLikeObject(card)) return false;
 
             viewModel = Memory.Ptr(card + CardViewModel);
@@ -556,7 +591,6 @@ namespace InFalsusChartLoader
 
             // The record is embedded in the view model, so its address is the view model plus the
             // field's offset — and the base name is inside it, which is what the catalogue matches on.
-            if (!ResolveFields()) return false;
             return JacketCatalog.IsOurs(viewModel + ViewModelSong);
         }
 

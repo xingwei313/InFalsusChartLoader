@@ -238,6 +238,9 @@ namespace InFalsusChartLoader
             IntPtr table = results;
             if (!Faulted)
             {
+#if DEBUG
+                long t0 = Now;
+#endif
                 try
                 {
                     if (CustomResults.Ready && CustomResults.IsOurs(songInfo))
@@ -250,6 +253,9 @@ namespace InFalsusChartLoader
                 {
                     Fault(Hook.ResultRead, e);
                 }
+#if DEBUG
+                TicksRead += Now - t0;
+#endif
             }
 
             return _readResultTramp(table, songInfo, difficulty, result, methodInfo);
@@ -267,6 +273,9 @@ namespace InFalsusChartLoader
             IntPtr table = results;
             if (!Faulted)
             {
+#if DEBUG
+                long t0 = Now;
+#endif
                 try
                 {
                     if (CustomResults.Ready && CustomResults.IsOurs(songInfo))
@@ -279,6 +288,9 @@ namespace InFalsusChartLoader
                 {
                     Fault(Hook.ResultReadFull, e);
                 }
+#if DEBUG
+                TicksRead += Now - t0;
+#endif
             }
 
             return _readResultFullTramp(table, songInfo, difficulty, score, shiny, perfect, far, miss,
@@ -372,7 +384,7 @@ namespace InFalsusChartLoader
                     {
                         ours = CustomResults.IsOurs(playing);
 #if DEBUG
-                        seen = $"song {Memory.U16(playing)}, {(ours ? "ours" : "not ours")}";
+                        seen = $"song {Memory.U16(playing + Offsets.Song.Id)}, {(ours ? "ours" : "not ours")}";
 #endif
                     }
 

@@ -305,6 +305,12 @@ namespace InFalsusChartLoader
             if (_offsetsResolved) return true;
             if (_noteFieldsMissing) return false;
 
+            // Not a failure: this runs from the import, and the interop store may not be up yet —
+            // the answer is re-asked while it is not. The latch below belongs after this line:
+            // `FieldResolver.Field` cannot tell "not yet" from "renamed", so a name asked before
+            // any class is in hand would turn a retryable state into a permanent miss.
+            if (FieldResolver.ClassPointer("_fA") == IntPtr.Zero) return false;
+
             Offsets.Note.Side = FieldResolver.Field("_fA", "_Ae");
             Offsets.Note.Type = FieldResolver.Field("_fA", "_be");
             Offsets.Note.StartMs = FieldResolver.Field("_fA", "_Be");

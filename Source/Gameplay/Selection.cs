@@ -122,8 +122,9 @@ namespace InFalsusChartLoader
             IntPtr song = payload + PayloadSong;
 
             // A zeroed payload names no song — id 0 is the empty slot, the same invariant the song
-            // table itself uses — and a song's record always carries its chart array.
-            if (Memory.U16(song) == 0) return false;
+            // table itself uses — and a song's record always carries its chart array. The id's
+            // offset is asked (`Offsets.Song.Id`), not assumed to be zero.
+            if (Memory.U16(song + Offsets.Song.Id) == 0) return false;
             if (!Memory.LooksLikeObject(Memory.Ptr(song + SongInfoCharts))) return false;
 
             songInfo = song;
@@ -353,6 +354,14 @@ namespace InFalsusChartLoader
             if (_songSelectClass == IntPtr.Zero) return -1;
 
             if (Memory.Ptr(scene) != _songSelectClass) return -1;
+
+            // The field read below is resolved with the payload's own shape (`Fields`), and not
+            // every way in here goes through it: `Difficulty` reaches this after `TryRead` may have
+            // turned the read down at `Offsets.Ready` — before the payload address was ever asked
+            // for — and after `Fields` itself may have failed. Either way the field is still -1,
+            // which would aim the read one byte before the scene object. Asked here; a miss is
+            // reported where it is asked, and "no difficulty" is the answer every caller handles.
+            if (!Fields()) return -1;
 
             return IndexOf(Memory.U8(scene + SceneDifficulty));
         }

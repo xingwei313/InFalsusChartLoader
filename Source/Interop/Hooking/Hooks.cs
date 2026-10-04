@@ -138,6 +138,26 @@ namespace InFalsusChartLoader
         /// <summary>谱面内背景（`_UmA`）。与曲绘分开计数，因为"背景换了、卡片没换"是它独有的形状。</summary>
         internal static long UmaCalls, UmaArmed;
 
+#if DEBUG
+        // ---- what the detours' own bodies cost ------------------------------------------------
+        // A screen that stutters has to be attributable, so these accumulate the ticks spent inside
+        // this mod's half of a detour — never inside the game's own body, which the trampoline runs
+        // outside the measured span — and `Probe.Status` prints the running totals in milliseconds.
+        // Diffing two probe lines against the wall clock between them says whether the mod is the
+        // cost. The pack row accessor is counted here as well: it runs from the pack list's own
+        // update and was the one hot path with no number at all (`CHARTLOADER_HANDOFF_V18` §6,
+        // open item 2).
+        //
+        // Debug-only: the measurement is two stopwatch reads per call, and a Release build has no
+        // probe to print it to, so it carries neither.
+        internal static long RowCalls, RowRedirects;
+        internal static long TicksRow, TicksApa, TicksMia, TicksVc, TicksRead;
+
+        internal static long Now => System.Diagnostics.Stopwatch.GetTimestamp();
+
+        internal static double Ms(long ticks) => ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+#endif
+
         /// <summary>How many went in, and how many were tried. Reported by the probe.</summary>
         internal static int Installed { get; private set; }
         internal static int Attempted { get; private set; }

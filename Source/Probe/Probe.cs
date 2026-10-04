@@ -181,7 +181,13 @@ namespace InFalsusChartLoader
             // dispatcher decided to drop, which the game fails without reading. Zero is the answer
             // that says the mechanism never fires.
             $"outstanding={PendingReads.Outstanding()} skip={PendingReads.Skipped} " +
-            $"released={PendingReads.Released} noread={PendingReads.NotTaken}";
+            $"released={PendingReads.Released} noread={PendingReads.NotTaken} " +
+            // What this mod's own detour bodies have cost so far, cumulative milliseconds — diff two
+            // of these lines against the wall clock between them to judge a stutter. `row` is the
+            // pack row accessor (calls / redirects), which had no counter at all before this.
+            $"ourms row={Hooks.Ms(Hooks.TicksRow):F1} apa={Hooks.Ms(Hooks.TicksApa):F1} " +
+            $"mia={Hooks.Ms(Hooks.TicksMia):F1} vc={Hooks.Ms(Hooks.TicksVc):F1} " +
+            $"read={Hooks.Ms(Hooks.TicksRead):F1} rowN={Hooks.RowCalls}/{Hooks.RowRedirects}";
 
         // ---------------------------------------------------------------- reading it back
 

@@ -94,11 +94,11 @@ namespace InFalsusChartLoader
                 return false;
             }
 
-            // Which row it wears: the In Falsus pack's — as long as that row has something to draw
-            // with. `Hooks.SourceRow` owns that question, because the same choice is made on every
-            // frame afterwards: this mod's row does not stay as written (something in this build puts
-            // a material into it during play), so the row is kept equal to its source rather than
-            // written once. See `Hooks.Keep`.
+            // Which row it wears: the first one the game draws — the In Falsus pack's — as long as
+            // that row has something to draw with. `Hooks.SourceRow` owns that question, and the row
+            // accessor (`PackVisualHook.PackRowDetour`) asks it too and sends our index to the same
+            // row, so this copy is what a reader that does not go through the accessor sees — the
+            // fallback, not the fix.
             int from = Hooks.SourceRow(table, count, stride);
             if (from < 0)
             {
@@ -167,10 +167,13 @@ namespace InFalsusChartLoader
         /// The third is the jacket's illustrator. It is a different mapping from the artist because the
         /// game shows them in different places, and it is keyed by the same `SongId` — so the write is
         /// the same call, against the field the dump lists as `jacketIllustratorNameTypeMapping`.
+        ///
+        /// Read only inside <see cref="SetSongText"/>, after <see cref="ResolveFields"/> — never at a
+        /// call site, where the read happens before the fields have been asked for (see `SongText`).
         /// </summary>
-        internal static int SongTitleTypeMapping = Offsets.Unresolved;
-        internal static int SongArtistTypeMapping = Offsets.Unresolved;
-        internal static int SongIllustratorTypeMapping = Offsets.Unresolved;
+        private static int SongTitleTypeMapping = Offsets.Unresolved;
+        private static int SongArtistTypeMapping = Offsets.Unresolved;
+        private static int SongIllustratorTypeMapping = Offsets.Unresolved;
 
         private static bool _fieldsResolved;
 
@@ -192,6 +195,13 @@ namespace InFalsusChartLoader
         {
             if (_fieldsResolved) return true;
             if (_fieldsMissing) return false;
+
+            // Not a failure: the interop store may not be up yet, and the answer is re-asked while
+            // it is not — the same rule `Selection.Fields` and `SongCatalog.TryGetAssets` follow.
+            // The latch below belongs after this line, not before it: `FieldResolver.Field` cannot
+            // tell "not yet" from "renamed", so asking the names before any class is in hand would
+            // turn a retryable state into a permanent miss.
+            if (FieldResolver.ClassPointer("DataAccess") == IntPtr.Zero) return false;
 
             PackAssetsTable = FieldResolver.Field("PackSelectSceneAssets", "packToAssets");
 
@@ -262,8 +272,27 @@ namespace InFalsusChartLoader
         /// </summary>
         private enum TextWhat { PackName, SongText }
 
-        internal static bool SetPackName(int packId, string name) =>
-            SetText(PackIdTypeMapping, packId, name, TextWhat.PackName);
+        internal static bool SetPackName(int packId, string name)
+        {
+            // The field is read here, after `ResolveFields` — not at the call site, for the reason
+            // `SongText` gives.
+            if (!ResolveFields()) return false;
+
+            return SetText(PackIdTypeMapping, packId, name, TextWhat.PackName);
+        }
+
+        /// <summary>
+        /// Which of the table's song lookups a write is aimed at.
+        ///
+        /// An enum rather than the field's value, because a field read at the call site is read
+        /// <b>before</b> <see cref="SetText"/> asks the game for it: in a Release build the first
+        /// song-text write of a run passed -1 — the fields start unresolved — and was dropped,
+        /// aimed one byte before the mapping object. A Debug build only got away with it because a
+        /// probe asks for the pack's visuals early (see <c>ChartLoaderMod.OnUpdate</c>). Taking the
+        /// name of the lookup and reading the field after <see cref="ResolveFields"/> makes the
+        /// order impossible to get wrong.
+        /// </summary>
+        internal enum SongText { Title, Artist, Illustrator }
 
         /// <summary>
         /// Gives a song a title or an artist, in the table the song list reads them from.
@@ -274,16 +303,23 @@ namespace InFalsusChartLoader
         /// is the same call with `2`, both of them entries in this table. So a song with no entry here
         /// has no title on its card, whichever fields the song record carries.
         /// </summary>
-        internal static bool SetSongText(int mappingField, int songId, string text) =>
-            SetText(mappingField, songId, text, TextWhat.SongText);
+        internal static bool SetSongText(SongText which, int songId, string text)
+        {
+            if (!ResolveFields()) return false;
+
+            int mappingField = which == SongText.Title ? SongTitleTypeMapping
+                             : which == SongText.Artist ? SongArtistTypeMapping
+                             : SongIllustratorTypeMapping;
+
+            return SetText(mappingField, songId, text, TextWhat.SongText);
+        }
 
         /// <summary>The one write, shared by the pack's name and a song's title and artist.</summary>
         private static bool SetText(int mappingField, int id, string text, TextWhat what)
         {
-            // Asked here, before this method reads any of them: this is the funnel every write goes
-            // through, and `Inject` reaches it before anything asks for the pack's visuals — so
-            // without this line the three song-text writes run before the offsets have been asked
-            // for at all. False means a name is missing and has been reported; nothing is written.
+            // Both callers above resolve before they read their field, so this is belt and braces:
+            // it is what makes a future caller that forgets fail closed — nothing written, and the
+            // miss reported where it was asked — rather than aim a write at -1.
             if (!ResolveFields()) return false;
 
             IntPtr klass = FieldResolver.ClassPointer("DataAccess");

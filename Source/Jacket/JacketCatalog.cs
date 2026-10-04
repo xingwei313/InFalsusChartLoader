@@ -251,6 +251,13 @@ namespace InFalsusChartLoader
         /// </summary>
         internal static string NameOf(IntPtr songInfo)
         {
+            // The offset this reads belongs to the song tables (`Offsets.Resolve`), and this is
+            // reached from the jacket detours — which are live from startup and stay live for the
+            // whole of a run whose registration failed. Before the tables are resolved that offset
+            // is -1, and -1 is not an offset: the read would be aimed one byte before the record.
+            // Nothing can be one of this mod's songs before the songs are registered anyway, so
+            // "not ours" is the honest answer while the tables are not up.
+            if (!Offsets.Ready) return null;
             if (!Memory.LooksLikeObject(songInfo)) return null;
 
             return Memory.Text(Memory.Ptr(songInfo + SongInfoBaseName), 128);

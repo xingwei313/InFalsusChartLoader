@@ -315,6 +315,9 @@ namespace InFalsusChartLoader
 
             if (!Faulted)
             {
+#if DEBUG
+                long t0 = Now;
+#endif
                 try
                 {
                     if (JacketCatalog.Find(songInfo, out IntPtr material))
@@ -329,6 +332,9 @@ namespace InFalsusChartLoader
                     JacketCatalog.Disarm();
                     Fault(Hook.JacketReference, e);
                 }
+#if DEBUG
+                TicksApa += Now - t0;
+#endif
             }
 
             return fallback;
@@ -346,14 +352,27 @@ namespace InFalsusChartLoader
 
             if (!Faulted)
             {
+#if DEBUG
+                long t0 = Now;
+#endif
                 try
                 {
-                    if (JacketCatalog.TryClaim(reference, out IntPtr material)) { MiaClaimed++; return material; }
+                    if (JacketCatalog.TryClaim(reference, out IntPtr material))
+                    {
+                        MiaClaimed++;
+#if DEBUG
+                        TicksMia += Now - t0;
+#endif
+                        return material;
+                    }
                 }
                 catch (Exception e)
                 {
                     Fault(Hook.JacketMaterial, e);
                 }
+#if DEBUG
+                TicksMia += Now - t0;
+#endif
             }
 
             return _miaTramp(owner, releaser, reference, forceReload, methodInfo);
@@ -431,7 +450,9 @@ namespace InFalsusChartLoader
             {
                 try
                 {
-                    if (Selection.TryRead(out IntPtr song, out int _) &&
+                    // 免门读法：带门的 `TryRead` 要那格难度字节，而游戏从不写它（V8 §3、`HANG_HANDOFF`
+                    // §9.2 量的）⇒ 门恒假、这条替换就永远不会 arm。难度由 `Find` 自己取（`_applied` 优先）。
+                    if (Selection.TryReadSong(out IntPtr song) &&
                         JacketCatalog.Find(song, out IntPtr material))
                     {
                         JacketCatalog.Arm(fallback, material);

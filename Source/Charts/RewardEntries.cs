@@ -23,9 +23,6 @@ namespace InFalsusChartLoader
     /// </summary>
     internal static unsafe class RewardEntries
     {
-        /// <summary>`StoryIdentifier` is a single packed `uint`.</summary>
-        private const int StoryIdentifierSize = 4;
-
         /// <summary>How many shipped ids to try before giving up on finding a template.</summary>
         private const int SearchLimit = 512;
 

@@ -477,13 +477,15 @@ namespace InFalsusChartLoader
             RewardEntries.Add(ids);
 
             // The song's title and artist as its card shows them: the localisation table, keyed by song
-            // id — the same table the pack's name goes in, and the same write. See SetSongText.
+            // id — the same table the pack's name goes in, and the same write. See SetSongText. The
+            // fields are named, not read here: `Inject` runs before anything has asked the game for
+            // their offsets, so a value read at this call site would be the unresolved -1.
             for (int i = 0; i < charts.Count; i++)
             {
                 int id = oldCount + i;
-                PackSetup.SetSongText(PackSetup.SongTitleTypeMapping, id, charts[i].Name);
-                PackSetup.SetSongText(PackSetup.SongArtistTypeMapping, id, charts[i].Composer);
-                PackSetup.SetSongText(PackSetup.SongIllustratorTypeMapping, id, charts[i].Illust);
+                PackSetup.SetSongText(PackSetup.SongText.Title, id, charts[i].Name);
+                PackSetup.SetSongText(PackSetup.SongText.Artist, id, charts[i].Composer);
+                PackSetup.SetSongText(PackSetup.SongText.Illustrator, id, charts[i].Illust);
             }
 
             // Before the rebuild, because that rebuild indexes these bits by song position.
