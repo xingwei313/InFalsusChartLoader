@@ -128,17 +128,18 @@ namespace InFalsusChartLoader
             if (Hooks.CompleteRead == null) return false;
 
             // The handle carries the index in its low 24 bits. The length and kind packed above it
-            // are the game's business; this mod only has to recognise its own index.
-            long handle = Memory.I64(record + 8);
-            int index = (int)(handle & 0xFFFFFF);
+            // are the game's business; this mod only has to recognise its own index. The record and
+            // its info block are the native side's own layout — see `Offsets.Runtime.ReadRecord`.
+            long handle = Memory.I64(record + Offsets.Runtime.ReadRecord.Handle);
+            int index = (int)(handle & Offsets.Runtime.ReadRecord.IndexMask);
             if (!ByIndex.TryGetValue(index, out Entry entry)) return false;
 
-            IntPtr info = Memory.Ptr(record);
+            IntPtr info = Memory.Ptr(record + Offsets.Runtime.ReadRecord.Info);
             if (info == IntPtr.Zero) return false;
 
-            int offset = Memory.I32(info + 8);
-            int size = Memory.I32(info + 12);
-            IntPtr buffer = Memory.Ptr(info + 32);
+            int offset = Memory.I32(info + Offsets.Runtime.ReadRecord.Offset);
+            int size = Memory.I32(info + Offsets.Runtime.ReadRecord.Length);
+            IntPtr buffer = Memory.Ptr(info + Offsets.Runtime.ReadRecord.Buffer);
             if (buffer == IntPtr.Zero || size <= 0) return false;
 
             byte[] bytes = entry.Audio.Bytes;
@@ -158,7 +159,7 @@ namespace InFalsusChartLoader
             // A read past the end is answered with nothing rather than refused, and the buffer is
             // left as it was: the game sizes its reads from the length this mod registered, so this
             // is the tail of the last chunk, not a gap.
-            Memory.WriteI32(info + 40, count);
+            Memory.WriteI32(info + Offsets.Runtime.ReadRecord.BytesRead, count);
 
             // The game's own handler takes the block out of its two outstanding-read sets at this
             // point, and this mod is standing in for that handler. Leaving those two calls out is
@@ -170,8 +171,9 @@ namespace InFalsusChartLoader
             // Finish through the game's own completion, with the record copied exactly as its own
             // handler copies it. Result 0 -- a success -- because the keystream already applied to
             // these bytes is cancelled by the transform that runs next.
-            byte* copy = stackalloc byte[40];
-            Buffer.MemoryCopy((void*)record, copy, 40, 40);
+            byte* copy = stackalloc byte[Offsets.Runtime.ReadRecord.Size];
+            Buffer.MemoryCopy((void*)record, copy, Offsets.Runtime.ReadRecord.Size,
+                              Offsets.Runtime.ReadRecord.Size);
             Hooks.CompleteRead((IntPtr)copy, 0);
             return true;
         }

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
 
 namespace InFalsusChartLoader
 {
@@ -41,9 +42,12 @@ namespace InFalsusChartLoader
     /// Whether a save landed is decided by the file, not by the call. This build's own save routine
     /// raises <b>after</b> it has already written the file — measured in both runs it was watched,
     /// with the file's timestamp moving about four tenths of a second before the exception arrived.
-    /// A raise is therefore not evidence of a failure; the file's stamp not moving is, and that is
-    /// the one case the error line is for. The raises that did land are counted apart so the
-    /// behaviour stays visible rather than being swallowed.
+    /// The cause turned out to be the container's write cache, which the constructor this mod calls
+    /// leaves empty and the game's own factory seeds; <see cref="SeedWrittenCache"/> seeds it here,
+    /// which removes both the raise and the retry loop that came with it. Judging a save by the file
+    /// stays, because a stamp is evidence that cannot be argued with — it is the fallback now rather
+    /// than the rule, and a raise that still lands is counted apart so the behaviour stays visible
+    /// rather than being swallowed.
     /// </para>
     /// <para>
     /// The objects here — the container, the save it holds, and the result table inside that — are
@@ -55,14 +59,21 @@ namespace InFalsusChartLoader
     /// </summary>
     internal static unsafe class CustomResults
     {
-        /// <summary>`_NH._DEb`, the container holding the game's own save.</summary>
-        private const int SaveContainer = 0x10;
+        /// <summary>
+        /// `_NH._DEb`, the container holding the game's own save — a field of a game class like the
+        /// four below, so it is asked by name before its first use (`FieldResolver.Field`, the same
+        /// call `_NH._dEb` is read with) and it stays at `Offsets.Unresolved` until it answers. A
+        /// name that does not resolve is reported and stops the feature — see <see cref="Prepare"/>.
+        /// </summary>
+        private static int SaveContainer = Offsets.Unresolved;
 
         // ---- Fields of the two classes reached into. They are properties of *this build of the
-        // game*, so the name is what is used and the number is only what the build was reversed
-        // with: `Resolve` asks the running game and adopts its answer (see `FieldOn`).
-        private static int FieldFullPath = 0x28;      // `_NH._OH<T>._JEb` — where the container's file is
-        private static int FieldGameResults = 0x20;   // `SingleFileSaveDataV2.GameResults`
+        // game*, so the name is what is used and there is no number to write: `Resolve` asks the
+        // running game (see `FieldOn`), and each stays at `Offsets.Unresolved` until it answers.
+        private static int FieldFullPath = Offsets.Unresolved;      // `_NH._OH<T>._JEb` — the container's file
+        private static int FieldGameResults = Offsets.Unresolved;   // `SingleFileSaveDataV2.GameResults`
+        private static int FieldWrittenBytes = Offsets.Unresolved;  // `_NH._OH<T>._LEb` — bytes last written
+        private static int FieldWrittenLength = Offsets.Unresolved; // `_NH._OH<T>._mEb` — and how many
 
         private const string FileName = "IFCL.sav";
         private const string TempFileName = "IFCL_temp.sav";
@@ -88,8 +99,10 @@ namespace InFalsusChartLoader
 
         /// <summary>
         /// Writes that landed while the game's own save still raised. Counted apart from
-        /// <see cref="Saves"/>'s total only for visibility — see <see cref="Save"/> — and expected to
-        /// equal it on a build whose save behaves the way this one was measured to.
+        /// <see cref="Saves"/>'s total only for visibility — see <see cref="Save"/>. Zero is the
+        /// healthy answer now that the container's write cache is seeded
+        /// (<see cref="SeedWrittenCache"/>); a raise that still lands is worth seeing rather than
+        /// swallowing, which is the whole reason this is counted rather than folded in.
         /// </summary>
         internal static long Late;
 
@@ -134,6 +147,9 @@ namespace InFalsusChartLoader
             try
             {
                 IntPtr save = RewardEntries.PlayerSave();
+                int containerField = FieldResolver.Field("_NH", "_DEb");
+                if (containerField < 0) { PrepareFailed("no field"); return; }
+                SaveContainer = containerField;
                 IntPtr official = save == IntPtr.Zero ? IntPtr.Zero : Memory.Ptr(save + SaveContainer);
                 if (!Memory.LooksLikeObject(official))
                 {
@@ -143,7 +159,7 @@ namespace InFalsusChartLoader
                 }
 
                 IntPtr klass = Il2CppInterop.Runtime.IL2CPP.il2cpp_object_get_class(official);
-                Resolve(klass);
+                if (!Resolve(klass)) { PrepareFailed("no field"); return; }
 
                 // The folder comes off the game's own file, so the two files are beside each other
                 // by construction and no path is guessed.
@@ -160,7 +176,8 @@ namespace InFalsusChartLoader
                 string tempPath = Path.Combine(folder, TempFileName);
 
                 bool exists = File.Exists(path);
-                IntPtr obj = exists ? Load(path) : IntPtr.Zero;
+                byte[] known = null;
+                IntPtr obj = exists ? Load(path, out known) : IntPtr.Zero;
                 if (exists && obj == IntPtr.Zero)
                 {
                     // A file that is there but could not be read is left alone: starting from an
@@ -184,7 +201,7 @@ namespace InFalsusChartLoader
                     Memory.WritePtr(obj + FieldGameResults, table);
                 }
 
-                IntPtr container = NewContainer(klass, obj, path, tempPath);
+                IntPtr container = NewContainer(klass, obj, path, tempPath, known);
                 if (container == IntPtr.Zero) { PrepareFailed("no container"); return; }
 
                 // All three are this mod's own objects and nothing in the game points at any of
@@ -276,11 +293,20 @@ namespace InFalsusChartLoader
 
             try
             {
-                byte* song = stackalloc byte[0x48];
-                for (int i = 0; i < 0x48; i++) song[i] = 0;
-                *(IntPtr*)(song + 8) = Str("IFCL self test");
+                // The record's own shape, from the one resolved set (`Offsets`, filled by
+                // `Resolve` when the game's tables first appeared): the size is measured and the
+                // two offsets are asked by name, so nothing here is a number of this file's.
+                byte* song = stackalloc byte[Offsets.Song.Size];
+                for (int i = 0; i < Offsets.Song.Size; i++) song[i] = 0;
+                *(IntPtr*)(song + Offsets.Song.BaseName) = Str("IFCL self test");
 
                 byte difficulty = 1;
+
+                // The record the reader would write on a hit, at the size the game's own writer
+                // asserts for it (96 — SAVE_RE §4.2). The key used below is in no table, so this
+                // call is a miss and the buffer is a guard rather than a working area — but a
+                // struct size has no name to look up and nothing here to measure it off, so it is
+                // flagged rather than passed off as resolved (`CHARTLOADER_HANDOFF_V17` §8.2).
                 byte* result = stackalloc byte[96];
 
                 IntPtr* args = stackalloc IntPtr[3];
@@ -306,7 +332,8 @@ namespace InFalsusChartLoader
         /// not fatal: the game keeps running, and the run's custom scores are simply not on disk.
         ///
         /// Success is read off the file, not off the call — see the class remarks for the
-        /// measurement this rests on. A raise whose file moved is counted as a save that landed
+        /// measurement this rests on, and <see cref="SeedWrittenCache"/> for why a raise is no
+        /// longer expected. A raise whose file moved is still counted as a save that landed
         /// (<see cref="Late"/>); only a raise that left the file untouched is a failure.
         /// </summary>
         internal static void Save()
@@ -381,9 +408,17 @@ namespace InFalsusChartLoader
 
         // ---------------------------------------------------------------- the file
 
-        /// <summary>The save object read out of `IFCL.sav`, or zero when it could not be read.</summary>
-        private static IntPtr Load(string path)
+        /// <summary>
+        /// The save object read out of `IFCL.sav`, or zero when it could not be read.
+        ///
+        /// <paramref name="raw"/> is the same bytes, handed on to the container's write cache —
+        /// see <see cref="SeedWrittenCache"/>. Set whenever the file was read, even if turning it
+        /// into a save object then failed.
+        /// </summary>
+        private static IntPtr Load(string path, out byte[] raw)
         {
+            raw = null;
+
             byte[] bytes;
             try
             {
@@ -401,6 +436,7 @@ namespace InFalsusChartLoader
                 return IntPtr.Zero;
             }
 
+            raw = bytes;
             return Deserialize(bytes);
         }
 
@@ -459,12 +495,13 @@ namespace InFalsusChartLoader
             IntPtr value = IntPtr.Zero;
             fixed (byte* data = bytes)
             {
-                // ReadOnlySpan<byte> is 16 bytes and goes by address, the same shape the game's own
-                // loader passes. The reference being written goes by its own address; the options
-                // are a reference, so their value is the pointer.
-                byte* span = stackalloc byte[16];
+                // The span goes by address, the same shape the game's own loader passes — its
+                // layout constant lives in `Offsets.Runtime` with the rest of the runtime's. The
+                // reference being written goes by its own address; the options are a reference, so
+                // their value is the pointer.
+                byte* span = stackalloc byte[Offsets.Runtime.SpanSize];
                 *(IntPtr*)span = (IntPtr)data;
-                *(int*)(span + 8) = bytes.Length;
+                *(int*)(span + Offsets.Runtime.SpanLength) = bytes.Length;
 
                 IntPtr* args = stackalloc IntPtr[3];
                 args[0] = (IntPtr)span;
@@ -497,7 +534,8 @@ namespace InFalsusChartLoader
             IntPtr statics = FieldResolver.Statics(klass);
             if (statics == IntPtr.Zero) return IntPtr.Zero;
 
-            return Memory.Ptr(statics + FieldResolver.Field("_NH", "_dEb", 0x08));
+            int at = FieldResolver.Field("_NH", "_dEb");
+            return at < 0 ? IntPtr.Zero : Memory.Ptr(statics + at);
         }
 
         /// <summary>`SingleFileSaveDataV2.CreateDefault()` — the game's own empty save.</summary>
@@ -564,8 +602,13 @@ namespace InFalsusChartLoader
         /// arguments this mod has no use for — the queue of post-migration steps and the
         /// default-creation function, both consumed by the factory this class does not go through —
         /// are left null.
+        ///
+        /// What the factory also does, and the constructor does not, is seed the write cache; that
+        /// is <see cref="SeedWrittenCache"/>, and skipping it is what made every save raise after
+        /// writing its file. <paramref name="known"/> is the file's own bytes for that seed.
         /// </summary>
-        private static IntPtr NewContainer(IntPtr klass, IntPtr saveObject, string path, string tempPath)
+        private static IntPtr NewContainer(IntPtr klass, IntPtr saveObject, string path, string tempPath,
+                                           byte[] known)
         {
             IntPtr ctor = MethodOn(klass, ".ctor", 7);
             if (ctor == IntPtr.Zero)
@@ -597,59 +640,195 @@ namespace InFalsusChartLoader
                 Diagnostics.Warn($"building the save container raised: {Raised.Text(raised)}");
                 return IntPtr.Zero;
             }
+
+            SeedWrittenCache(instance, known);
             return instance;
+        }
+
+        /// <summary>
+        /// Gives the container the write cache its constructor does not.
+        ///
+        /// <para>
+        /// `_JOA` writes the file and then updates a cache of the bytes it wrote — `_LEb` (a
+        /// `byte[]`) and `_mEb` (how many of them are valid) — and that cache is what lets a later
+        /// save whose bytes are unchanged skip the write. The closing step does not check the array
+        /// for null: with `_LEb` zero it raises, after the file is already correct on disk.
+        /// </para>
+        /// <para>
+        /// A container from the game's own factory is never in that state — the factory seeds both
+        /// fields before returning, with a buffer holding the file's bytes (and an allocated, empty
+        /// one when there is no file). This mod builds its container by calling the constructor
+        /// directly, so that seeding is the step it was skipping. Measured without it, every save
+        /// of a session: the file written correctly, then the raise, then the game's own retry loop
+        /// — five more attempts at moving a temporary file the first attempt had already consumed,
+        /// with sleeps of 25/50/75/100/125 ms (0.375 s, and the two runs it was watched in showed
+        /// 0.387 and 0.389) — and the `FileNotFoundException` from the last attempt rethrown.
+        /// Which is why `Save` used to have to judge a write by the file rather than by the call.
+        /// </para>
+        /// <para>
+        /// Seeding the file's own bytes makes the cache start out true, so the first save that
+        /// changes nothing writes nothing; with no file (or no array to be had) the cache starts
+        /// empty and the closing step grows it. A seed that cannot be made is not fatal — the
+        /// behaviour is then the one measured above, which `Save` already handles.
+        /// </para>
+        /// </summary>
+        private static void SeedWrittenCache(IntPtr container, byte[] known)
+        {
+            if (container == IntPtr.Zero) return;
+
+            try
+            {
+                int length = known == null ? 0 : known.Length;
+
+                // Exactly the file's own bytes and nothing more. No size of this mod's choosing
+                // belongs here: the closing step grows the buffer itself (to the next power of two)
+                // whenever a write outgrows it, so an initial capacity would be a number with
+                // nothing behind it — and for the first save of a session it would be outgrown
+                // anyway. With no file this is a zero-length array, which is a complete, non-null
+                // value; see `ByteArray`.
+                IntPtr bytes = ByteArray(length);
+                if (bytes == IntPtr.Zero)
+                {
+                    Diagnostics.Warn("the container's write cache could not be seeded; the first save " +
+                                     "will take the game's retry path and raise an exception the file " +
+                                     "will have to be judged against");
+                    return;
+                }
+
+                if (length > 0) Marshal.Copy(known, 0, bytes + Offsets.Runtime.ArrayDataOffset, length);
+
+                Memory.WritePtr(container + FieldWrittenBytes, bytes);
+                Memory.WriteI32(container + FieldWrittenLength, length);
+                Diagnostics.Info($"the container's write cache starts with {length} byte(s)");
+            }
+            catch (Exception e)
+            {
+                Diagnostics.Warn("the container's write cache could not be seeded: " + Diagnostics.Describe(e));
+            }
+        }
+
+        /// <summary>
+        /// A `byte[]` of this game's own heap — one dimension, `count` long — or zero.
+        ///
+        /// The element class is taken from an array that already is one: the game's own container
+        /// keeps the bytes it wrote last as a `byte[]` (the factory seeds it — see
+        /// <see cref="SeedWrittenCache"/>), and an array's own class is exactly the class this
+        /// needs. A container that somehow has no such array falls back to asking the runtime for
+        /// `System.Byte` by name, which is how every other class this mod reaches is found.
+        /// (`il2cpp_object_new` is not an option: on an array class it would make something with no
+        /// bounds at all.)
+        /// </summary>
+        private static IntPtr ByteArray(int count)
+        {
+            IntPtr arrayClass = BorrowedByteArrayClass();
+            if (arrayClass == IntPtr.Zero)
+            {
+                IntPtr byteClass = Il2CppInterop.Runtime.IL2CPP.GetIl2CppClass("mscorlib.dll", "System", "Byte");
+                if (byteClass == IntPtr.Zero) return IntPtr.Zero;
+
+                arrayClass = Il2CppInterop.Runtime.IL2CPP.il2cpp_array_class_get(byteClass, 1);
+            }
+            if (arrayClass == IntPtr.Zero) return IntPtr.Zero;
+
+            return Il2CppInterop.Runtime.IL2CPP.il2cpp_array_new(arrayClass, (ulong)count);
+        }
+
+        /// <summary>
+        /// The class of the game container's own write-cache array, or zero when it has none.
+        ///
+        /// Reached the same way <see cref="Prepare"/> reaches that container — off the save
+        /// singleton — rather than kept from there: this runs once, and two pointer reads are
+        /// cheaper than another parameter threaded through the constructor call.
+        /// </summary>
+        private static IntPtr BorrowedByteArrayClass()
+        {
+            try
+            {
+                if (FieldWrittenBytes <= 0) return IntPtr.Zero;
+
+                IntPtr save = RewardEntries.PlayerSave();
+                IntPtr official = save == IntPtr.Zero ? IntPtr.Zero : Memory.Ptr(save + SaveContainer);
+                if (!Memory.LooksLikeObject(official)) return IntPtr.Zero;
+
+                IntPtr sample = Memory.Ptr(official + FieldWrittenBytes);
+                if (!Memory.LooksLikeObject(sample)) return IntPtr.Zero;
+
+                return Il2CppInterop.Runtime.IL2CPP.il2cpp_object_get_class(sample);
+            }
+            catch (Exception)
+            {
+                return IntPtr.Zero;
+            }
         }
 
         // ---------------------------------------------------------------- resolution
 
-        /// <summary>The two field offsets, asked of the running game once.</summary>
-        private static void Resolve(IntPtr containerClass)
+        private static bool _fieldsMissing;
+
+        /// <summary>
+        /// The four field offsets, asked of the running game once, and whether all of them answered.
+        ///
+        /// A miss leaves its field at -1 and is reported by <see cref="FieldOn"/>; this then answers
+        /// false and latches, and <see cref="Prepare"/> gives up on the whole feature — the custom
+        /// results stay in the game's own save, which is what happened before this class existed,
+        /// rather than being read and written through an offset that is not there.
+        /// </summary>
+        private static bool Resolve(IntPtr containerClass)
         {
-            if (_resolved) return;
+            if (_fieldsMissing) return false;
+            if (_resolved) return true;
             _resolved = true;
 
-            FieldFullPath = FieldOn(containerClass, "_JEb", FieldFullPath);
-            FieldGameResults = FieldOn(FieldResolver.ClassPointer("SingleFileSaveDataV2"),
-                                       "GameResults", FieldGameResults);
+            FieldFullPath = FieldOn(containerClass, "_JEb");
+            FieldWrittenBytes = FieldOn(containerClass, "_LEb");
+            FieldWrittenLength = FieldOn(containerClass, "_mEb");
+            FieldGameResults = FieldOn(FieldResolver.ClassPointer("SingleFileSaveDataV2"), "GameResults");
+
+            if (FieldFullPath < 0 || FieldWrittenBytes < 0 || FieldWrittenLength < 0 ||
+                FieldGameResults < 0)
+            {
+                _fieldsMissing = true;
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>
-        /// A field's offset on one class, by name; the fallback when it cannot be asked.
+        /// A field's offset on one class, asked by name — or <b>-1</b> when it cannot be asked.
         ///
         /// These two classes are not in <see cref="FieldResolver"/>'s index — one is a nested
-        /// generic, the other is reached as an instance's own class — so the offset is taken off
-        /// the class pointer itself. An offset that disagrees with the constant is adopted and
-        /// reported, the same rule the rest of this mod resolves fields by.
+        /// generic, the other is reached as an instance's own class — so the offset is taken off the
+        /// class pointer itself. There is no number in this signature, for the reason
+        /// <see cref="FieldResolver.Field"/> has none: a miss is reported here, by name, in every
+        /// build, and the caller has to stop — see <see cref="Resolve"/>, which does.
         /// </summary>
-        private static int FieldOn(IntPtr klass, string name, int fallback)
+        private static int FieldOn(IntPtr klass, string name)
         {
-            if (klass == IntPtr.Zero) return fallback;
+            if (klass == IntPtr.Zero) return -1;
 
             try
             {
                 IntPtr field = Il2CppInterop.Runtime.IL2CPP.il2cpp_class_get_field_from_name(klass, name);
                 if (field == IntPtr.Zero)
                 {
-                    Diagnostics.Warn($"{name} is not on its class; keeping 0x{fallback:X}");
-                    return fallback;
+                    Diagnostics.Error($"{name}: no usable field by that name in this build");
+                    return -1;
                 }
 
                 int offset = (int)Il2CppInterop.Runtime.IL2CPP.il2cpp_field_get_offset(field);
                 if (offset <= 0)
                 {
-                    Diagnostics.Warn($"{name} reports offset 0x{offset:X}, which cannot be one; keeping 0x{fallback:X}");
-                    return fallback;
+                    Diagnostics.Error($"{name}: no usable field by that name in this build");
+                    return -1;
                 }
 
-                if (offset != fallback)
-                    Diagnostics.Warn($"{name} has moved to 0x{offset:X} (this build was reversed with " +
-                                     $"0x{fallback:X}); using the game's");
                 return offset;
             }
-            catch (Exception e)
+            catch (Exception)
             {
-                Diagnostics.Warn($"{name} could not be resolved: {Diagnostics.Describe(e)}");
-                return fallback;
+                Diagnostics.Error($"{name}: no usable field by that name in this build");
+                return -1;
             }
         }
 

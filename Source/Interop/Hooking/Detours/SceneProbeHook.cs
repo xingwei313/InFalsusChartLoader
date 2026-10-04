@@ -150,18 +150,25 @@ namespace InFalsusChartLoader
         /// <summary>
         /// How far along a `_J._Ig` is, when that is what is being waited on.
         ///
-        /// `_Ig` is a pooled `CustomYieldInstruction` whose `keepWaiting` is one byte at `+0x10`:
-        /// zero until whoever owns it says it is done. Printed only for that class, and only as a
-        /// number, because it is the difference between "the game is still working on it" and "it has
-        /// been finished and this is not resuming anyway".
+        /// `_Ig` is a pooled `CustomYieldInstruction` whose `keepWaiting` reads one byte of it,
+        /// asked by name here like every other field — zero until whoever owns it says it is done.
+        /// Printed only for that class, and only as a number, because it is the difference between
+        /// "the game is still working on it" and "it has been finished and this is not resuming
+        /// anyway".
         /// </summary>
         internal static string WaitProgress()
         {
             if (SceneSwitchWait == IntPtr.Zero) return null;
             if (SceneSwitchWaitName != "_Ig") return SceneSwitchWaitName;
 
-            return $"_Ig/+0x10={Memory.U8(SceneSwitchWait + 0x10)}";
+            if (_igDoneByte == int.MinValue) _igDoneByte = FieldResolver.Field("_Ig", "_TwA");
+            if (_igDoneByte < 0) return SceneSwitchWaitName;    // reported where it was asked
+
+            return $"_Ig/+0x{_igDoneByte:X}={Memory.U8(SceneSwitchWait + _igDoneByte)}";
         }
+
+        /// <summary>`_J._Ig._TwA` — the byte `keepWaiting` reads, asked once.</summary>
+        private static int _igDoneByte = int.MinValue;
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate byte MoveNextFn(IntPtr self, IntPtr methodInfo);
@@ -241,11 +248,12 @@ namespace InFalsusChartLoader
             return more;
         }
 
-        /// <summary>`&lt;&gt;2__current` — the object a generated coroutine is yielding.</summary>
-        private const int CurrentField = 0x18;
+        /// <summary>`&lt;&gt;2__current` — the object a generated coroutine is yielding. The layout
+        /// and its reason live in `Offsets.Runtime.Coroutine`; these are aliases of it.</summary>
+        private const int CurrentField = Offsets.Runtime.Coroutine.Current;
 
         /// <summary>`&lt;&gt;1__state` — a generated coroutine's state, at the same offset in all of them.</summary>
-        private const int StateField = 0x10;
+        private const int StateField = Offsets.Runtime.Coroutine.State;
 
     }
 }

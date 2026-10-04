@@ -69,11 +69,14 @@ namespace InFalsusChartLoader
 
         private const string PackNamespace = "ifapp.Game";
 
+        // No offsets are written in this file: every one is asked by name (`ResolveFields`), and each
+        // stays at `Offsets.Unresolved` (-1) until it answers. See `Offsets` for why.
+
         /// <summary>`PackVisualMemberLarge._Mf`, the cards of the pack on screen.</summary>
-        private static int CardsField = 0x120;
+        private static int CardsField = Offsets.Unresolved;
 
         /// <summary>`PackSongCardMember._if`, the song view model the card was built from.</summary>
-        private static int CardViewModel = 0x78;
+        private static int CardViewModel = Offsets.Unresolved;
 
         /// <summary>
         /// `PackVisualMemberLarge.dataAccess`, which the card's build has to be handed.
@@ -82,35 +85,61 @@ namespace InFalsusChartLoader
         /// to the card build it performs inline, and the card's build only forwards it to `_qc`, which
         /// reads the song data and the localisation table out of it.
         /// </summary>
-        private static int PackDataAccess = 0xF0;
+        private static int PackDataAccess = Offsets.Unresolved;
 
         /// <summary>`_SH._WEb`, the song record — embedded, so this is its address and not a pointer.</summary>
-        private static int ViewModelSong = 0x10;
+        private static int ViewModelSong = Offsets.Unresolved;
+
+        /// <summary>`SongSelectPackAssets.PackSelectLargeNonCompleted` — the large-card material slot.</summary>
+        private static int RowLargeCard = Offsets.Unresolved;
+
+        /// <summary>`SongSelectPackAssets.PackSelectNonCompleted` — the small-card material slot.</summary>
+        private static int RowSmallCard = Offsets.Unresolved;
 
         private static bool _fieldsResolved;
 
+        private static bool _fieldsMissing;
+
         /// <summary>
-        /// Both of the above, asked of the running game by name, once.
+        /// The five offsets this file reads, asked of the running game by name, once, and whether all
+        /// of them answered.
         ///
         /// They are fields of *this build of the game*, not of this mod: a patch moves them and the
-        /// mod reads a plausible-looking value from the wrong place rather than failing. The
-        /// constants are what this build was reversed with and nothing more (see <see cref="Offsets"/>).
+        /// mod reads a plausible-looking value from the wrong place rather than failing. A name that
+        /// cannot be resolved is reported by <see cref="FieldResolver.Field"/> and answered false
+        /// here — the cards are then left exactly as the game built them, which is the behaviour this
+        /// hook exists to improve on, and the run says why rather than comparing or rebuilding
+        /// through an offset that is not there.
         /// </summary>
-        private static void ResolveFields()
+        private static bool ResolveFields()
         {
-            if (_fieldsResolved) return;
+            if (_fieldsResolved) return true;
+            if (_fieldsMissing) return false;
 
-            PackDataAccess = FieldResolver.Field("PackVisualMemberLarge", "dataAccess", PackDataAccess);
-            ViewModelSong = FieldResolver.Field("_SH", "_WEb", ViewModelSong);
-            CardsField = FieldResolver.Field("PackVisualMemberLarge", "_Mf", CardsField);
-            CardViewModel = FieldResolver.Field("PackSongCardMember", "_if", CardViewModel);
-            ViewModelDifficulty = FieldResolver.Field("_SH", "_xEb", ViewModelDifficulty);
+            PackDataAccess = FieldResolver.Field("PackVisualMemberLarge", "dataAccess");
+            ViewModelSong = FieldResolver.Field("_SH", "_WEb");
+            CardsField = FieldResolver.Field("PackVisualMemberLarge", "_Mf");
+            CardViewModel = FieldResolver.Field("PackSongCardMember", "_if");
+            ViewModelDifficulty = FieldResolver.Field("_SH", "_xEb");
+            RowLargeCard = FieldResolver.Field("SongSelectPackAssets", "PackSelectLargeNonCompleted");
+            RowSmallCard = FieldResolver.Field("SongSelectPackAssets", "PackSelectNonCompleted");
+
+            if (PackDataAccess < 0 || ViewModelSong < 0 || CardsField < 0 ||
+                CardViewModel < 0 || ViewModelDifficulty < 0 ||
+                RowLargeCard < 0 || RowSmallCard < 0)
+            {
+                _fieldsMissing = true;
+                Diagnostics.Error("the pack's card fields could not be read by name in this build; the " +
+                                  "cards will keep the difficulty they were first built with");
+                return false;
+            }
 
             _fieldsResolved = true;
+            return true;
         }
 
         /// <summary>`_SH._xEb`, the difficulty the card is showing.</summary>
-        private static int ViewModelDifficulty = 0x50;
+        private static int ViewModelDifficulty = Offsets.Unresolved;
 
         /// <summary>
         /// `void _vc(ChartDifficultyFlag)`.
@@ -333,17 +362,20 @@ namespace InFalsusChartLoader
         }
 
         /// <summary>
-        /// Whether a row has a material in a slot the pack screen draws from — the large card (0x20) or
-        /// the small one (0x40). Any, not every: rows in this build differ in which slots they carry
-        /// (measured: rows 0 and 1 have a first material and no backing or unowned one).
+        /// Whether a row has a material in a slot the pack screen draws from — the large card
+        /// (`PackSelectLargeNonCompleted`) or the small one (`PackSelectNonCompleted`). Any, not
+        /// every: rows in this build differ in which slots they carry (measured: rows 0 and 1 have a
+        /// first material and no backing or unowned one).
         /// </summary>
         private static bool Drawable(IntPtr table, int count, int stride, int id)
         {
+            if (!ResolveFields()) return false;
+
             IntPtr row = Row(table, count, stride, id);
             if (row == IntPtr.Zero) return false;
 
-            return Memory.LooksLikeObject(Memory.Ptr(row + 0x20))
-                || Memory.LooksLikeObject(Memory.Ptr(row + 0x40));
+            return Memory.LooksLikeObject(Memory.Ptr(row + RowLargeCard))
+                || Memory.LooksLikeObject(Memory.Ptr(row + RowSmallCard));
         }
 
         /// <summary>The row an id selects — `packToAssets[id]`, and row zero for an id past the end.</summary>
@@ -459,10 +491,9 @@ namespace InFalsusChartLoader
             // the game's fields, and the only other places that resolve them (`Ours`, `RebuildCards`)
             // are reached *after* the list has been read below — so without this call the very first
             // question ("were these cards built for another difficulty?") would be asked with the
-            // constant this build was reversed with. On a build that moved `_Mf` that read fails,
-            // this returns, and neither the rebuild nor the name lookups ever run — silently, because
-            // the failure looks exactly like "nothing to do".
-            ResolveFields();
+            // constant this build was reversed with. A name that did not answer is reported by
+            // `ResolveFields` and answered here as "nothing to do".
+            if (!ResolveFields()) return false;
 
             if (!Memory.TryList(Memory.Ptr(packVisual + CardsField), out IntPtr items, out int count))
                 return false;
@@ -489,7 +520,8 @@ namespace InFalsusChartLoader
         {
             if (_buildCard == null) return;
 
-            ResolveFields();
+            if (!ResolveFields()) return;
+
             IntPtr dataAccess = Memory.Ptr(packVisual + PackDataAccess);
             if (!Memory.LooksLikeObject(dataAccess)) return;
 
@@ -524,7 +556,7 @@ namespace InFalsusChartLoader
 
             // The record is embedded in the view model, so its address is the view model plus the
             // field's offset — and the base name is inside it, which is what the catalogue matches on.
-            ResolveFields();
+            if (!ResolveFields()) return false;
             return JacketCatalog.IsOurs(viewModel + ViewModelSong);
         }
 

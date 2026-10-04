@@ -32,13 +32,20 @@ namespace InFalsusChartLoader
     /// </summary>
     internal static unsafe class StreamingAssets
     {
-        /// <summary>`_BG._RxA`, the singleton, at that offset inside the statics block.</summary>
-        private const int StaticSingleton = 0x10;
+        // `_BG`'s five offsets are asked by name — see `Resolve` — and each stays at
+        // `Offsets.Unresolved` (-1) until it answers. See `Offsets` for why.
 
-        private static int FieldFiles = 0x28;    // FileInfo[] _TxA
-        private static int FieldLengths = 0x30;  // long[]    _uxA
-        private static int FieldFlags = 0x38;    // bool[]    _UxA
-        private static int FieldChunks = 0x40;   // _DG[]     _vxA, 40 bytes per entry
+        private static int FieldFiles = Offsets.Unresolved;    // FileInfo[] _TxA
+        private static int FieldLengths = Offsets.Unresolved;  // long[]    _uxA
+        private static int FieldFlags = Offsets.Unresolved;    // bool[]    _UxA
+        private static int FieldChunks = Offsets.Unresolved;   // _DG[]     _vxA, 40 bytes per entry
+
+        /// <summary>`_BG._RxA` — the singleton, resolved with the other four.</summary>
+        private static int SingletonField = Offsets.Unresolved;
+
+        private static bool _fieldsAsked;
+
+        private static bool _fieldsMissing;
 
         /// <summary>No stand-in: the array holds values, so a zeroed slot is a complete one.</summary>
         private const int None = -1;
@@ -73,14 +80,29 @@ namespace InFalsusChartLoader
                     return false;
                 }
 
-                // The manager's four tables, asked of the game by name. They are fields of *this build*
-                // of the game, so none of them belongs in this file as a number (see Offsets).
-                FieldFiles = FieldResolver.Field("_BG", "_TxA", FieldFiles);
-                FieldLengths = FieldResolver.Field("_BG", "_uxA", FieldLengths);
-                FieldFlags = FieldResolver.Field("_BG", "_UxA", FieldFlags);
-                FieldChunks = FieldResolver.Field("_BG", "_vxA", FieldChunks);
+                // The manager's five offsets, asked of the game by name. They are fields of *this
+                // build* of the game, so none of them belongs in this file as a number (see Offsets);
+                // and they are asked once, because this runs from a point where the manager may not
+                // exist yet and a name asked again would report its miss again. A miss latches: the
+                // caller's own line says what it costs, and one of the names is simply not in this
+                // build.
+                if (!_fieldsAsked)
+                {
+                    _fieldsAsked = true;
 
-                IntPtr bg = Memory.Ptr(statics + FieldResolver.Field("_BG", "_RxA", StaticSingleton));
+                    FieldFiles = FieldResolver.Field("_BG", "_TxA");
+                    FieldLengths = FieldResolver.Field("_BG", "_uxA");
+                    FieldFlags = FieldResolver.Field("_BG", "_UxA");
+                    FieldChunks = FieldResolver.Field("_BG", "_vxA");
+                    SingletonField = FieldResolver.Field("_BG", "_RxA");
+
+                    _fieldsMissing = FieldFiles < 0 || FieldLengths < 0 || FieldFlags < 0 ||
+                                     FieldChunks < 0 || SingletonField < 0;
+                }
+
+                if (_fieldsMissing) return false;
+
+                IntPtr bg = Memory.Ptr(statics + SingletonField);
                 if (!Memory.LooksLikeObject(bg))
                 {
                     Diagnostics.Warn("the streaming asset manager singleton is not there yet; " +

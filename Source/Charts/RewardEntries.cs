@@ -23,12 +23,6 @@ namespace InFalsusChartLoader
     /// </summary>
     internal static unsafe class RewardEntries
     {
-        /// <summary>`DataAccess._iAb`.</summary>
-        private const int StaticRewardData = 0x30;
-
-        /// <summary>`RewardData._Geb`, `Dictionary&lt;SongId, StoryIdentifier&gt;`.</summary>
-        private const int RewardSongStories = 0x38;
-
         /// <summary>`StoryIdentifier` is a single packed `uint`.</summary>
         private const int StoryIdentifierSize = 4;
 
@@ -51,14 +45,20 @@ namespace InFalsusChartLoader
                 IntPtr statics = FieldResolver.Statics(klass);
                 if (statics == IntPtr.Zero) return 0;
 
-                IntPtr reward = Memory.Ptr(statics + FieldResolver.Field("DataAccess", "_iAb", StaticRewardData));
+                int rewardField = FieldResolver.Field("DataAccess", "_iAb");
+                if (rewardField < 0) return 0;
+
+                IntPtr reward = Memory.Ptr(statics + rewardField);
                 if (!Memory.LooksLikeObject(reward))
                 {
                     Diagnostics.Warn("RewardData is not loaded; the custom songs will not be listed");
                     return 0;
                 }
 
-                IntPtr table = Memory.Ptr(reward + FieldResolver.Field("RewardData", "_Geb", RewardSongStories));
+                int storyField = FieldResolver.Field("RewardData", "_Geb");
+                if (storyField < 0) return 0;
+
+                IntPtr table = Memory.Ptr(reward + storyField);
                 if (!Memory.LooksLikeObject(table))
                 {
                     Diagnostics.Warn("RewardData has no song-to-story table; the custom songs will not be listed");

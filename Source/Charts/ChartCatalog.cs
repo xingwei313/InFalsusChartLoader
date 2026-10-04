@@ -85,9 +85,22 @@ namespace InFalsusChartLoader
             if (!decoded) ChartCodec.Empty(result);
 
             // `_R._RC`. The game's loader always clears it, and the note loop that follows compares
-            // it against the previous load's value.
-            *(IntPtr*)(result + 0x20) = IntPtr.Zero;
+            // it against the previous load's value. Asked by name like every other field; a name
+            // that does not answer is reported where it is asked and the clear is skipped — the
+            // tuple is still served either way, because refusing here would send the name to the
+            // game's own loader, whose not-found path throws inside a coroutine.
+            int sourceText = SourceTextField();
+            if (sourceText >= 0) *(IntPtr*)(result + sourceText) = IntPtr.Zero;
             return true;
+        }
+
+        private static int _sourceTextField = int.MinValue;
+
+        /// <summary>`_R._RC`'s offset, asked once — see <see cref="TryServe"/> for what a miss costs.</summary>
+        private static int SourceTextField()
+        {
+            if (_sourceTextField == int.MinValue) _sourceTextField = FieldResolver.Field("_R", "_RC");
+            return _sourceTextField;
         }
 
         /// <summary>

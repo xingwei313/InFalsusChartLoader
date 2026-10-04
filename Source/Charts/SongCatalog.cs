@@ -26,9 +26,8 @@ namespace InFalsusChartLoader
     /// </summary>
     internal static unsafe class SongCatalog
     {
-        // ---- DataAccess: the two asset fields, both static. ----
-        private const int StaticSongData = 0x48;
-        private const int StaticPackData = 0x60;
+        // ---- DataAccess: the two asset fields, both static, both asked by name. ----
+        // (No offsets are written here: see `Offsets` — a game offset is never a number in this mod.)
 
         // ---- SongData ----
         // Everything in this section is an **alias** of the one resolved set in `Offsets`, which asks
@@ -225,8 +224,21 @@ namespace InFalsusChartLoader
         /// </summary>
         private static readonly byte[] DifficultyFlags = { 1, 2, 4, 8 };
 
+        private static int _songDataField = int.MinValue;
+        private static int _packDataField = int.MinValue;
+        private static bool _unusable;
+
         /// <summary>
-        /// The two asset objects, or false while the game has not finished loading them.
+        /// Whether this run has to give up on the game's tables: a name the mod reads by could not
+        /// be resolved. Reported where it happens and latched, because asking again cannot change a
+        /// name that is not in this build.
+        /// </summary>
+        internal static bool Unusable => _unusable;
+
+        /// <summary>
+        /// The two asset objects, or false while the game has not finished loading them — or when a
+        /// name this mod reaches them by is not in this build, in which case
+        /// <see cref="Unusable"/> is set and nothing more will come of asking.
         ///
         /// They are static fields on <c>DataAccess</c> and are filled by an Addressables load during
         /// startup, so "not yet" is the ordinary state for the first frames and not an error.
@@ -236,23 +248,46 @@ namespace InFalsusChartLoader
             songData = IntPtr.Zero;
             packData = IntPtr.Zero;
 
+            if (_unusable) return false;
+
             IntPtr klass = FieldResolver.ClassPointer("DataAccess");
             if (klass == IntPtr.Zero) return false;
 
             IntPtr statics = FieldResolver.Statics(klass);
             if (statics == IntPtr.Zero) return false;
 
-            songData = Memory.Ptr(statics + FieldResolver.Field("DataAccess", "_JAb", StaticSongData));
-            packData = Memory.Ptr(statics + FieldResolver.Field("DataAccess", "_lAb", StaticPackData));
+            // The two offsets are asked once: this runs from the first frames, long before the
+            // assets are loaded, and a name asked again every frame would report its miss every
+            // frame. Once the class is in hand the answer cannot change.
+            if (_songDataField == int.MinValue)
+            {
+                _songDataField = FieldResolver.Field("DataAccess", "_JAb");
+                _packDataField = FieldResolver.Field("DataAccess", "_lAb");
+            }
 
-            bool ready = Memory.LooksLikeObject(songData) && Memory.LooksLikeObject(packData);
+            if (_songDataField < 0 || _packDataField < 0)
+            {
+                _unusable = true;
+                Diagnostics.Error("the game's data assets could not be found by name in this build; " +
+                                  "no custom song will be registered");
+                return false;
+            }
+
+            songData = Memory.Ptr(statics + _songDataField);
+            packData = Memory.Ptr(statics + _packDataField);
+
+            if (!Memory.LooksLikeObject(songData) || !Memory.LooksLikeObject(packData)) return false;
 
             // Where the song tables' fields and strides actually are, asked of the running game once
-            // both objects exist. From here on nothing reads a constant this build was reversed with
-            // unless the game could not be asked at all.
-            if (ready) Offsets.Resolve(songData, packData);
+            // both objects exist. A name that cannot be answered stops the run here, rather than
+            // being papered over with the number this build was reversed with — see Offsets.Resolve.
+            if (!Offsets.Resolve(songData, packData))
+            {
+                _unusable = true;
+                return false;
+            }
 
-            return ready;
+            return true;
         }
 
         /// <summary>

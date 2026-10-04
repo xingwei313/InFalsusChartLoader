@@ -16,8 +16,8 @@ namespace InFalsusChartLoader
     /// and a difficulty. In the demo build's source it is a static on <c>SongSelectScene</c> that the
     /// play handler fills as its first act, and in the shipped build it is the same thing: a
     /// <c>private static _nG</c>, whose first field is the song record and whose difficulty byte sits
-    /// exactly where the record's size says it should (0x168 + 0x40 = 0x1A8, with the next field at
-    /// 0x1A9 — the three offsets check each other).
+    /// right after it. Everything about that shape is asked by name (<see cref="Fields"/>) — no
+    /// offset is written in this file, so nothing in it can go stale.
     /// </para>
     /// <para>
     /// The record is a struct held in the static field, so its address is the field's address — not a
@@ -27,15 +27,18 @@ namespace InFalsusChartLoader
     /// </summary>
     internal static class Selection
     {
+        // No offsets are written here: all five are asked by name (`Fields`), and each stays at
+        // `Offsets.Unresolved` (-1) until it answers. See `Offsets` for why.
+
         /// <summary>Where the payload sits inside `SongSelectScene`'s statics.</summary>
-        private const int StaticPayload = 0x0;
+        private static int PayloadField = Offsets.Unresolved;
 
         /// <summary>
         /// `_nG._LYA` (the selected song, embedded — this is its address, not a pointer to it) and
         /// `_nG._mYA` (its difficulty, one byte). Resolved by name where the payload is reached.
         /// </summary>
-        private static int PayloadSong = 0x168;
-        private static int PayloadDifficulty = 0x1A8;
+        private static int PayloadSong = Offsets.Unresolved;
+        private static int PayloadDifficulty = Offsets.Unresolved;
 
         /// <summary>`SongInfo.ChartInfos` — read only to tell a filled payload from a zeroed one.</summary>
         private static int SongInfoCharts => Offsets.Song.Charts;
@@ -44,6 +47,10 @@ namespace InFalsusChartLoader
         private static readonly byte[] DifficultyFlags = { 1, 2, 4, 8 };
 
         private static IntPtr _payload;
+
+        private static bool _fieldsAsked;
+
+        private static bool _fieldsMissing;
 
         /// <summary>
         /// The address of the selected song record and its difficulty as 0..3, or false when the game
@@ -60,6 +67,10 @@ namespace InFalsusChartLoader
         {
             songInfo = IntPtr.Zero;
             difficulty = -1;
+
+            // The record's own shape is part of the same answer: `Offsets` was asked for it, and a
+            // name that did not resolve leaves it at -1 — which is the record's header, not a field.
+            if (!Offsets.Ready) return false;
 
             IntPtr payload = Payload();
             if (payload == IntPtr.Zero) return false;
@@ -103,6 +114,8 @@ namespace InFalsusChartLoader
         {
             songInfo = IntPtr.Zero;
 
+            if (!Offsets.Ready) return false;
+
             IntPtr payload = Payload();
             if (payload == IntPtr.Zero) return false;
 
@@ -135,19 +148,20 @@ namespace InFalsusChartLoader
             if (_refused) return;
             _refused = true;
 
-            // The window both offsets sit in, so a payload that is not shaped the way the dump says
-            // is visible as bytes instead of inferred from a failed check.
+            // The song record and the words after it, so a payload that is not shaped the way the
+            // names say is visible as bytes instead of inferred from a failed check. The window
+            // starts where the record does — a resolved offset, not a number.
             var words = new System.Text.StringBuilder();
             for (int i = 0; i < 12; i++)
             {
                 if (i > 0) words.Append(' ');
-                words.Append(Memory.I64(payload + 0x150 + i * 8).ToString("X16"));
+                words.Append(Memory.I64(payload + PayloadSong + i * 8).ToString("X16"));
             }
 
             Diagnostics.Info($"probe: selection payload 0x{payload.ToInt64():X} turned the read down: {why}");
-            Diagnostics.Info($"probe:   +0x150..  {words}");
+            Diagnostics.Info($"probe:   from +0x{PayloadSong:X}  {words}");
             Diagnostics.Info($"probe:   +0x{PayloadSong:X} id={Memory.I64(payload + PayloadSong)} " +
-                             $"name='{Memory.Text(Memory.Ptr(payload + PayloadSong + 8), 128) ?? "(not a string)"}' " +
+                             $"name='{Memory.Text(Memory.Ptr(payload + PayloadSong + Offsets.Song.BaseName), 128) ?? "(not a string)"}' " +
                              $"charts=0x{Memory.Ptr(payload + PayloadSong + SongInfoCharts).ToInt64():X} " +
                              $"diff-bytes={Memory.U8(payload + PayloadDifficulty):X2} " +
                              $"{Memory.U8(payload + PayloadDifficulty + 1):X2} " +
@@ -160,12 +174,11 @@ namespace InFalsusChartLoader
         private static bool _refused;
 #endif
 
-        /// <summary>`SongSelectScene._sr` — the selected song, beside the difficulty on the scene.</summary>
         /// <summary>`SongSelectScene._sr` — resolved with the payload, see the resolve site.</summary>
-        private static int SelectedSong = 0x194;
+        private static int SelectedSong = Offsets.Unresolved;
 
         /// <summary>`SongSelectScene._Sr` — the difficulty the player has selected, on the scene itself.</summary>
-        private static int SceneDifficulty = 0x196;
+        private static int SceneDifficulty = Offsets.Unresolved;
 
         private static IntPtr _songSelectClass;
 
@@ -274,6 +287,7 @@ namespace InFalsusChartLoader
         {
             if (!difficultyChanged) return false;
             if (!Memory.LooksLikeObject(scene)) return false;
+            if (!Fields()) return false;
             if (Memory.U16(scene + SelectedSong) != songId) return false;
 
             Memory.WriteU16(scene + SelectedSong, Shadow(songId));
@@ -290,6 +304,7 @@ namespace InFalsusChartLoader
         internal static void Unshadow(IntPtr scene, ushort songId)
         {
             if (!Memory.LooksLikeObject(scene)) return;
+            if (!Fields()) return;
             if (Memory.U16(scene + SelectedSong) != Shadow(songId)) return;
 
             Memory.WriteU16(scene + SelectedSong, songId);
@@ -343,41 +358,52 @@ namespace InFalsusChartLoader
         }
 
         /// <summary>
-        /// The address of the payload, or zero.
+        /// The five offsets this file reads, asked of the running game once, and whether all of them
+        /// answered.
         ///
-        /// Resolved once — the class and its statics block do not move, and this is read from a path
-        /// that runs dozens of times whenever the song list repaints. A <b>failure is not
-        /// remembered</b>, though: the answer is re-asked while it is zero, so an early call before
-        /// the interop has the class does not disable this for the rest of the session.
+        /// A miss is reported by <see cref="FieldResolver.Field"/> and leaves its offset at -1; this
+        /// then answers false and latches, and every reader and writer here refuses. Refusing is the
+        /// answer the ruling on this feature already gives: a difficulty that cannot be read means
+        /// the game draws its own picture — never a read, and never a write, at an offset that is
+        /// not there.
         /// </summary>
-        private static IntPtr Payload()
+        private static bool Fields()
         {
-            if (_payload != IntPtr.Zero) return _payload;
+            if (_fieldsMissing) return false;
+            if (_fieldsAsked) return true;
 
+            // Not a failure: the interop may not be up yet, and the answer is re-asked while it is
+            // not — the same rule the payload address used to follow on its own.
             IntPtr klass = FieldResolver.ClassPointer("SongSelectScene");
-            if (klass == IntPtr.Zero)
-            {
-                Diagnostics.Warn("SongSelectScene could not be found; which difficulty is selected will " +
-                                 "not be known, and a song with a picture per difficulty will not show one");
-                return IntPtr.Zero;
-            }
+            if (klass == IntPtr.Zero) return false;
 
             IntPtr statics = FieldResolver.Statics(klass);
-            if (statics == IntPtr.Zero)
-            {
-                Diagnostics.Warn("SongSelectScene has no statics block; which difficulty is selected " +
-                                 "will not be known");
-                return IntPtr.Zero;
-            }
+            if (statics == IntPtr.Zero) return false;
 
             // The payload's own shape, asked of the game once, alongside the static it lives in.
-            PayloadSong = FieldResolver.Field("_nG", "_LYA", PayloadSong);
-            PayloadDifficulty = FieldResolver.Field("_nG", "_mYA", PayloadDifficulty);
-            SelectedSong = FieldResolver.Field("SongSelectScene", "_sr", SelectedSong);
-            SceneDifficulty = FieldResolver.Field("SongSelectScene", "_Sr", SceneDifficulty);
+            PayloadSong = FieldResolver.Field("_nG", "_LYA");
+            PayloadDifficulty = FieldResolver.Field("_nG", "_mYA");
+            SelectedSong = FieldResolver.Field("SongSelectScene", "_sr");
+            SceneDifficulty = FieldResolver.Field("SongSelectScene", "_Sr");
+            PayloadField = FieldResolver.Field("SongSelectScene", "_xr");
 
-            return _payload = statics + FieldResolver.Field("SongSelectScene", "_xr", StaticPayload);
+            if (PayloadSong < 0 || PayloadDifficulty < 0 || SelectedSong < 0 ||
+                SceneDifficulty < 0 || PayloadField < 0)
+            {
+                _fieldsMissing = true;
+                Diagnostics.Error("SongSelectScene's payload could not be read by name in this build; " +
+                                  "which difficulty is selected will not be known, so a song with a " +
+                                  "picture per difficulty will not show one");
+                return false;
+            }
+
+            _fieldsAsked = true;
+            _payload = statics + PayloadField;
+            return true;
         }
+
+        /// <summary>The address of the payload, or zero — see <see cref="Fields"/>.</summary>
+        private static IntPtr Payload() => Fields() ? _payload : IntPtr.Zero;
 
         /// <summary>A `ChartDifficultyFlag` as an index into the four difficulty slots, or -1.</summary>
         private static int IndexOf(byte flag)

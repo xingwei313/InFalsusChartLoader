@@ -46,8 +46,11 @@ namespace InFalsusChartLoader
         /// </summary>
         private static delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr> _hab;
 
-        /// <summary>Bytes of one `_fA`. 128 as reversed; re-measured off a live array when possible.</summary>
-        private static int _noteSize = Offsets.Note.Size;
+        /// <summary>
+        /// Bytes of one `_fA`, measured off the live array before the first note is read. Zero until
+        /// then: a stride is a measurement, and nothing may read a note before one has been taken.
+        /// </summary>
+        private static int _noteSize;
 
         /// <summary>
         /// How long a chart may claim to be, in milliseconds. Not a game rule — a bound that a
@@ -127,11 +130,11 @@ namespace InFalsusChartLoader
                 return false;
             }
 
-            byte* span = stackalloc byte[16];
+            byte* span = stackalloc byte[Offsets.Runtime.SpanSize];
             fixed (byte* data = bytes)
             {
                 *(IntPtr*)span = (IntPtr)data;
-                *(int*)(span + 8) = bytes.Length;
+                *(int*)(span + Offsets.Runtime.SpanLength) = bytes.Length;
                 _gab(tuple32, (IntPtr)span, name, IntPtr.Zero);
             }
 
@@ -147,7 +150,7 @@ namespace InFalsusChartLoader
         {
             reason = null;
 
-            IntPtr notes = Memory.Ptr(tuple32 + 0x10);
+            IntPtr notes = Memory.Ptr(tuple32 + Offsets.Runtime.ChartTupleNotes);
             if (!Memory.TryList(notes, out IntPtr items, out int count))
             {
 #if DEBUG
@@ -164,7 +167,13 @@ namespace InFalsusChartLoader
                 return false;
             }
 
-            MeasureNoteSize(items, count);
+            if (!MeasureNoteSize(items, count))
+            {
+#if DEBUG
+                reason = "the note records could not be read this build";
+#endif
+                return false;
+            }
 
             for (int i = 0; i < count; i++)
             {
@@ -239,49 +248,79 @@ namespace InFalsusChartLoader
         /// <summary>
         /// Takes the note stride off the live array instead of trusting the reversed constant: the
         /// array knows its own byte length and its own element count, and the quotient is the answer.
-        /// The constant is only the fallback for a chart that somehow has no backing array.
+        /// False when it cannot be had — a stride nothing vouched for is a stride no note may be read
+        /// at, so the chart is refused rather than checked against fields at unknown offsets.
         /// </summary>
-        private static void MeasureNoteSize(IntPtr items, int count)
+        private static bool MeasureNoteSize(IntPtr items, int count)
         {
-            ResolveNoteFields();
+            if (!ResolveNoteFields()) return false;
+            if (_strideMissing) return false;
+
             try
             {
                 IntPtr array = items - Offsets.Runtime.ArrayDataOffset;
                 long byteLength = Il2CppInterop.Runtime.IL2CPP.il2cpp_array_get_byte_length(array);
                 int stride = (int)(byteLength / count);
-                if (stride > 0 && stride == _noteSize) return;
 
                 if (stride > 0)
                 {
-                    Diagnostics.Warn($"note records measure {stride} bytes, not {_noteSize}; using the measurement");
+                    // The first measurement is the answer. A later one that disagrees is the thing
+                    // worth saying: it means the array changed shape while the run was going.
+                    if (_noteSize > 0 && stride != _noteSize)
+                        Diagnostics.Warn($"note records measure {stride} bytes, not the {_noteSize} measured before");
+
                     _noteSize = stride;
+                    return true;
                 }
             }
             catch (Exception e)
             {
                 Diagnostics.Warn($"could not measure the note stride: {Diagnostics.Describe(e)}");
             }
+
+            _strideMissing = true;
+            Diagnostics.Error("the note records' stride could not be measured in this build; " +
+                              "no chart can be checked, so none will load");
+            return false;
         }
 
         private static bool _offsetsResolved;
 
+        private static bool _noteFieldsMissing;
+
+        private static bool _strideMissing;
+
         /// <summary>
-        /// The four `_fA` field offsets, asked of the running game by name, once.
+        /// The four `_fA` field offsets, asked of the running game by name, once, and whether all of
+        /// them answered.
         ///
         /// A note record is a struct, so a patch that changes its shape moves its fields — and this is
         /// read for every note of every chart, which makes a stale offset here a wrong judgement
-        /// rather than a visible failure. The constant is only what this build was reversed with.
+        /// rather than a visible failure. A name that cannot be resolved is reported by
+        /// <see cref="FieldResolver.Field"/>, answered false here and latched: with no way to read a
+        /// note, no chart can be vetted, and every chart is refused rather than accepted unchecked.
         /// </summary>
-        private static void ResolveNoteFields()
+        private static bool ResolveNoteFields()
         {
-            if (_offsetsResolved) return;
+            if (_offsetsResolved) return true;
+            if (_noteFieldsMissing) return false;
 
-            Offsets.Note.Side = FieldResolver.Field("_fA", "_Ae", Offsets.Note.Side);
-            Offsets.Note.Type = FieldResolver.Field("_fA", "_be", Offsets.Note.Type);
-            Offsets.Note.StartMs = FieldResolver.Field("_fA", "_Be", Offsets.Note.StartMs);
-            Offsets.Note.EndMs = FieldResolver.Field("_fA", "_ce", Offsets.Note.EndMs);
+            Offsets.Note.Side = FieldResolver.Field("_fA", "_Ae");
+            Offsets.Note.Type = FieldResolver.Field("_fA", "_be");
+            Offsets.Note.StartMs = FieldResolver.Field("_fA", "_Be");
+            Offsets.Note.EndMs = FieldResolver.Field("_fA", "_ce");
+
+            if (Offsets.Note.Side < 0 || Offsets.Note.Type < 0 ||
+                Offsets.Note.StartMs < 0 || Offsets.Note.EndMs < 0)
+            {
+                _noteFieldsMissing = true;
+                Diagnostics.Error("the note record's fields could not be read by name in this build; " +
+                                  "no chart can be checked, so none will load");
+                return false;
+            }
 
             _offsetsResolved = true;
+            return true;
         }
     }
 }

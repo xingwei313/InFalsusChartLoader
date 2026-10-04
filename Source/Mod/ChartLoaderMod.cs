@@ -127,7 +127,14 @@ namespace InFalsusChartLoader
 
             try
             {
-                if (!SongCatalog.TryGetAssets(out IntPtr songData, out IntPtr packData)) return;
+                if (!SongCatalog.TryGetAssets(out IntPtr songData, out IntPtr packData))
+                {
+                    // A name the mod reads the tables by is not in this build: reported once where it
+                    // was asked, and nothing this run can come of asking again. Stop, rather than
+                    // poll for the rest of the session.
+                    if (SongCatalog.Unusable) _registered = true;
+                    return;
+                }
 
 #if DEBUG
                 PackSetup.TryGetVisuals(out IntPtr packAssetsForProbe);

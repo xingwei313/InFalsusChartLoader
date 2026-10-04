@@ -42,33 +42,49 @@ namespace InFalsusChartLoader
     internal static unsafe class PendingReads
     {
         /// <summary>`_hF._vSA` — reads handed to the native side and not finished yet.</summary>
-        private static int FieldDispatched = 0x20;
+        private static int FieldDispatched = Offsets.Unresolved;
 
         /// <summary>`_hF._VSA` — reads the dispatcher has decided to skip.</summary>
-        private static int FieldCancelled = 0x28;
+        private static int FieldCancelled = Offsets.Unresolved;
 
         /// <summary>`_hF._tSA`, the manager's state word. Inline, not a pointer: it reads 1.</summary>
-        private static int FieldState = 0x00;
+        private static int FieldState = Offsets.Unresolved;
 
         private static bool _fieldsResolved;
 
+        private static bool _fieldsMissing;
+
         /// <summary>
-        /// `_hF`'s three fields, asked of the running game by name, once.
+        /// `_hF`'s three fields, asked of the running game by name, once, and whether all answered.
         ///
         /// They are offsets into the class's statics block, and they are properties of *this build of
         /// the game* rather than of this mod — the same reason every other offset here is looked up
         /// (see <see cref="Offsets"/>). A patch that inserts a field ahead of these moves them, and a
-        /// stale one would have this mod reading and removing from the wrong sets without saying so.
+        /// stale one would have this mod removing from the wrong sets without saying so — which is
+        /// why a miss is reported by <see cref="FieldResolver.Field"/>, answered false here, and
+        /// hinted at once in the log: the sets are then left exactly as the game leaves them, which
+        /// is the behaviour this class was written to correct, and the run says so rather than
+        /// reaching into whatever sits at the old offset.
         /// </summary>
-        private static void ResolveFields()
+        private static bool ResolveFields()
         {
-            if (_fieldsResolved) return;
+            if (_fieldsResolved) return true;
+            if (_fieldsMissing) return false;
 
-            FieldDispatched = FieldResolver.Field("_hF", "_vSA", FieldDispatched);
-            FieldCancelled = FieldResolver.Field("_hF", "_VSA", FieldCancelled);
-            FieldState = FieldResolver.Field("_hF", "_tSA", FieldState);
+            FieldDispatched = FieldResolver.Field("_hF", "_vSA");
+            FieldCancelled = FieldResolver.Field("_hF", "_VSA");
+            FieldState = FieldResolver.Field("_hF", "_tSA");
+
+            if (FieldDispatched < 0 || FieldCancelled < 0 || FieldState < 0)
+            {
+                _fieldsMissing = true;
+                Diagnostics.Error("the read bookkeeping's fields could not be read by name in this build; " +
+                                  "a served read will not release its block");
+                return false;
+            }
 
             _fieldsResolved = true;
+            return true;
         }
 
         /// <summary>The value of that word while the manager is not taking reads.</summary>
@@ -103,7 +119,6 @@ namespace InFalsusChartLoader
         {
             if (!Ready()) return;
 
-            ResolveFields();
             IntPtr info = Memory.Ptr(record);
             if (info == IntPtr.Zero) return;
 
@@ -125,7 +140,6 @@ namespace InFalsusChartLoader
         {
             if (!Ready()) return;
 
-            ResolveFields();
             if (Memory.I32(_statics + FieldState) == NotReading) { NotTaken++; return; }
 
             IntPtr info = Memory.Ptr(record);
@@ -166,6 +180,10 @@ namespace InFalsusChartLoader
                     _statics = FieldResolver.Statics(klass);
                     if (_statics == IntPtr.Zero) return false;
                 }
+
+                // The offsets come first: everything below reads through one of them, and a name
+                // that did not answer leaves its offset at -1 — the class, not the field.
+                if (!ResolveFields()) return false;
 
                 IntPtr sample = Memory.Ptr(_statics + FieldDispatched);
                 if (!Memory.LooksLikeObject(sample)) return false;

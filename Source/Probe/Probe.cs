@@ -208,8 +208,9 @@ namespace InFalsusChartLoader
             line($"song[{index}]       id={id} base='{baseName}' charts={Length(chartArray)} " +
                  $"readings={(title == IntPtr.Zero ? "null" : "set")} " +
                  $"artist(ptr)={(artist == IntPtr.Zero ? "null" : "set")} " +
-                 $"preview={Memory.F32(song + 0x20)}..{Memory.F32(song + 0x24)}s " +
-                 $"reward={Memory.I32(song + 0x3C)}");
+                 $"preview={Memory.F32(song + Offsets.Song.PreviewStart)}.." +
+                 $"{Memory.F32(song + Offsets.Song.PreviewEnd)}s " +
+                 $"reward={Memory.I32(song + Offsets.Song.RewardStyle)}");
 
             if (baseName != expected.BaseName)
                 line($"  !! base name is '{baseName}', expected '{expected.BaseName}'");
@@ -218,11 +219,12 @@ namespace InFalsusChartLoader
             if (chartArray != IntPtr.Zero && Length(chartArray) > 0)
             {
                 IntPtr chart = chartArray + Offsets.Runtime.ArrayDataOffset;
-                line($"  chart[0]      id='{Memory.Text(Memory.Ptr(chart), 128)}' " +
-                     $"available={Memory.U8(chart + 0x08)} difficulty={Memory.U8(chart + 0x09)} " +
-                     $"designer='{Memory.Text(Memory.Ptr(chart + 0x10), 128)}' " +
-                     $"rating={Memory.I32(chart + 0x20)} " +
-                     $"section='{Memory.Text(Memory.Ptr(chart + 0x28), 16)}'");
+                line($"  chart[0]      id='{Memory.Text(Memory.Ptr(chart + Offsets.Chart.Id), 128)}' " +
+                     $"available={Memory.U8(chart + Offsets.Chart.Available)} " +
+                     $"difficulty={Memory.U8(chart + Offsets.Chart.Difficulty)} " +
+                     $"designer='{Memory.Text(Memory.Ptr(chart + Offsets.Chart.Designer), 128)}' " +
+                     $"rating={Memory.I32(chart + Offsets.Chart.Rating)} " +
+                     $"section='{Memory.Text(Memory.Ptr(chart + Offsets.Chart.Section), 16)}'");
             }
         }
 
@@ -261,11 +263,14 @@ namespace InFalsusChartLoader
 
             // The first material of every row, as a pointer: rows that share one are rows the game has
             // not filled, and the row this mod wrote is recognisable by matching the one it copied.
+            // The backing slot is asked by name, the way this file asks every other field.
+            int backing = FieldResolver.Lookup("SongSelectPackAssets", "BackingImageNonCompleted");
+
             for (int i = 0; i < count; i++)
             {
                 IntPtr row = table + Offsets.Runtime.ArrayDataOffset + i * stride;
                 line($"  row[{i}]        at=0x{row.ToInt64():X} first=0x{Memory.Ptr(row).ToInt64():X} " +
-                     $"backing=0x{Memory.Ptr(row + 0x60).ToInt64():X}");
+                     $"backing={(backing < 0 ? "(no field)" : $"0x{Memory.Ptr(row + backing).ToInt64():X}")}");
             }
         }
 

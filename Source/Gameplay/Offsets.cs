@@ -56,11 +56,57 @@ namespace InFalsusChartLoader
             internal const int ClassStatics = 0xB8;
 
             /// <summary>
+            /// The two pointers every IL2CPP object starts with — its class and its monitor. A
+            /// value type's field offsets are reported relative to them (a boxed struct's fields
+            /// start here), which is the correction `FieldResolver` applies.
+            /// </summary>
+            internal const int ObjectHeader = 0x10;
+
+            /// <summary>
             /// Where a boxed value type's payload starts (klass + monitor). What
             /// `il2cpp_value_box` hands back points at a box, not at the value, and what
             /// `il2cpp_runtime_invoke` hands back for a value-type return is one of these.
             /// </summary>
             internal const int BoxedData = 0x10;
+
+            /// <summary>
+            /// `ReadOnlySpan&lt;byte&gt;` / `Span&lt;byte&gt;`: `{ byte* reference; int length }` — 16 bytes,
+            /// handed over by address because it is wider than one register. A runtime ABI, like
+            /// everything else in this class.
+            /// </summary>
+            internal const int SpanSize = 0x10;
+
+            /// <summary>A span's length field, right after its reference (`{ T*; int }`).</summary>
+            internal const int SpanLength = 8;
+
+            /// <summary>
+            /// The note list inside `_R._rC`'s `ValueTuple&lt;_t, List&lt;_fA&gt;, List&lt;_eA&gt;&gt;`:
+            /// the tuple's second element, so it sits after the 16-byte `_t`. A tuple has no field
+            /// names to ask for and the size of `_t` is not measurable — a container layout, not a
+            /// game field, so it lives here with the rest.
+            /// </summary>
+            internal const int ChartTupleNotes = 0x10;
+
+            /// <summary>
+            /// The read record the FMOD servicing thread is handed, and what its info block holds.
+            ///
+            /// Neither has a name to ask for: both are built by the **native** side — the plugin's
+            /// file callbacks — and no game class declares them. They are the only layout left in
+            /// this mod that is neither a game field (asked by name) nor a measurement, so they are
+            /// named once, here, with the reason.
+            /// </summary>
+            internal static class ReadRecord
+            {
+                internal const int Info = 0;          // record[0]: the info block the read works on
+                internal const int Handle = 8;        // record[1]: index | length << 24 | kind << 56
+                internal const int Size = 40;         // five qwords, copied whole into `_bGA`
+                internal const int IndexMask = 0xFFFFFF;
+
+                internal const int Offset = 8;        // info+8: where in the file this read starts
+                internal const int Length = 12;       // info+12: how many bytes it asks for
+                internal const int Buffer = 32;       // info+32: where those bytes go
+                internal const int BytesRead = 40;    // info+40: how many were put there
+            }
 
             /// <summary>
             /// The two fields the C# compiler puts at the head of every generated coroutine class:
@@ -92,167 +138,233 @@ namespace InFalsusChartLoader
         /// <summary>`_fA`, the note record the decoder produces. 128 bytes each.</summary>
         internal static class Note
         {
-            /// <summary>Stride. Measured off a live array at startup rather than trusted.</summary>
-            internal static int Size = 0x80;
+            // -1 until `Resolve` asks. There is no size here: a stride is a measurement, taken off
+            // the live array (`ChartCodec`, which owns that question) — never a number to fall back
+            // to. The four below are field offsets, asked by name and kept at -1 when they cannot be.
 
             /// <summary>`_Ae` — which plane the note is on: 1 main, 2 shift, 3 space, 4 sky.</summary>
-            internal static int Side = 0x10;
+            internal static int Side = Unresolved;
 
             /// <summary>`_be` — 1 tap, 2 hold, 4 flick, 5 sky area.</summary>
-            internal static int Type = 0x14;
+            internal static int Type = Unresolved;
 
             /// <summary>`_Be` — judgement start, absolute milliseconds.</summary>
-            internal static int StartMs = 0x18;
+            internal static int StartMs = Unresolved;
 
             /// <summary>`_ce` — judgement end, absolute milliseconds. Equal to the start for a tap.</summary>
-            internal static int EndMs = 0x1C;
+            internal static int EndMs = Unresolved;
         }
 
         // ══════════════════════════════════════════════════════════════════════════════════════
-        // The song tables. Everything below is a property of *this build of the game*, so none of it
-        // is a constant: the numbers are only what this build was reversed with, and `Resolve` asks
-        // the running game for the real ones as soon as the data objects exist.
+        // The song tables. Everything below is a property of *this build of the game*, so nothing
+        // here is a number: every field offset is asked by name (`Resolve`), and every stride is
+        // **measured** off the live arrays (`FieldResolver.ElementSize`). A number written here
+        // would be a game offset nothing keeps true — not a name, not a measurement.
         //
-        // The two **sizes** have no name to look up at all — a struct's size is not a field — so they
-        // are *measured* off the live arrays (`FieldResolver.ElementSize`). Those arrays are the only
-        // place a patch that changed a struct's shape can be caught; without them a stale stride
-        // reads the middle of one element as the start of the next, which is a pointer that passes
-        // every "does this look like an object" test and then faults inside the runtime.
+        // Each one reads `Unresolved` (-1) until it has been asked, which is not an offset at all:
+        // a premature read is a read of the object's header, so nothing may read one before
+        // `Ready`. The sizes have no name to look up — a struct's size is not a field — and the
+        // arrays are the only place a patch that changed a struct's shape can be caught; without
+        // them a stale stride reads the middle of one element as the start of the next, which is a
+        // pointer that passes every "does this look like an object" test and then faults inside the
+        // runtime.
         //
         // A single home for all of it, because three copies of the same offset is how "fixed one,
         // forgot the other two" happens.
         // ══════════════════════════════════════════════════════════════════════════════════════
 
+        /// <summary>-1: a field that has not been asked yet is not a field.</summary>
+        internal const int Unresolved = -1;
+
         /// <summary>`SongData` — the class holding every song.</summary>
         internal static class SongData
         {
             /// <summary>`allSongInfo`, `SongInfo[]`. The game's own song table.</summary>
-            internal static int AllSongs = 0x20;
+            internal static int AllSongs = Unresolved;
 
             /// <summary>`_Efb`, `Dictionary&lt;string, SongId&gt;` — the name index.</summary>
-            internal static int NameIndex = 0x58;
+            internal static int NameIndex = Unresolved;
 
             /// <summary>`_Ffb`, the `BitArray` with one bit per song index.</summary>
-            internal static int Availability = 0x68;
+            internal static int Availability = Unresolved;
         }
 
         /// <summary>`PackData` — the class holding every pack.</summary>
         internal static class PackData
         {
             /// <summary>`PackInfo[]`; the array order is the order the UI shows them in.</summary>
-            internal static int Packs = 0x20;
+            internal static int Packs = Unresolved;
         }
 
         /// <summary>`SongInfo`, one song.</summary>
         internal static class Song
         {
-            /// <summary>Stride. Measured off `allSongInfo` — a patch that widens the struct lands here.</summary>
-            internal static int Size = 0x40;
+            /// <summary>Stride, measured off `allSongInfo` — a patch that widens the struct lands here.</summary>
+            internal static int Size = Unresolved;
 
             /// <summary>`Id`, `SongId` (a ushort). Slot-valid ⟺ `Id == index`; the game's own `_CpA` tests exactly that.</summary>
-            internal static int Id = 0x00;
+            internal static int Id = Unresolved;
 
             /// <summary>`BaseName`, the string the game builds `{name}{difficulty}.spc` from.</summary>
-            internal static int BaseName = 0x08;
+            internal static int BaseName = Unresolved;
 
             /// <summary>`ChartInfos`, `SongChartInfo[]` — the four difficulties.</summary>
-            internal static int Charts = 0x18;
+            internal static int Charts = Unresolved;
 
             /// <summary>`PreviewStartSeconds` / `PreviewEndSeconds`, floats in seconds.</summary>
-            internal static int PreviewStart = 0x20;
-            internal static int PreviewEnd = 0x24;
+            internal static int PreviewStart = Unresolved;
+            internal static int PreviewEnd = Unresolved;
 
             /// <summary>`LocalizationToTitleReadingOverride` / `ArtistReadingOverride` — per-locale readings.</summary>
-            internal static int TitleReading = 0x28;
-            internal static int ArtistReading = 0x30;
+            internal static int TitleReading = Unresolved;
+            internal static int ArtistReading = Unresolved;
 
             /// <summary>`RewardStyle`.</summary>
-            internal static int RewardStyle = 0x3C;
+            internal static int RewardStyle = Unresolved;
         }
 
         /// <summary>`SongChartInfo`, one difficulty of one song.</summary>
         internal static class Chart
         {
-            /// <summary>Stride. Measured off a song's own `ChartInfos`.</summary>
-            internal static int Size = 0x30;
+            /// <summary>Stride, measured off a song's own `ChartInfos`.</summary>
+            internal static int Size = Unresolved;
 
-            internal static int Id = 0x00;              // string — the chart's file name
-            internal static int Available = 0x08;       // bool
-            internal static int Difficulty = 0x09;      // ChartDifficultyFlag
-            internal static int Designer = 0x10;        // string
-            internal static int JacketDesigner = 0x18;  // string
-            internal static int Rating = 0x20;          // int
-            internal static int Section = 0x28;         // string, LevelSectionIndicator
+            internal static int Id = Unresolved;              // string — the chart's file name
+            internal static int Available = Unresolved;       // bool
+            internal static int Difficulty = Unresolved;      // ChartDifficultyFlag
+            internal static int Designer = Unresolved;        // string
+            internal static int JacketDesigner = Unresolved;  // string
+            internal static int Rating = Unresolved;          // int
+            internal static int Section = Unresolved;         // string, LevelSectionIndicator
         }
 
         /// <summary>`PackInfo`, one pack (a row of the pack select screen).</summary>
         internal static class Pack
         {
-            /// <summary>Stride. Measured off `PackData.PackInfo`.</summary>
-            internal static int Size = 0x18;
+            /// <summary>Stride, measured off `PackData.PackInfo`.</summary>
+            internal static int Size = Unresolved;
 
-            internal static int Id = 0x00;     // PackId (ushort)
-            internal static int Slug = 0x08;   // string
-            internal static int Songs = 0x10;  // SongId[]
+            internal static int Id = Unresolved;     // PackId (ushort)
+            internal static int Slug = Unresolved;   // string
+            internal static int Songs = Unresolved;  // SongId[]
         }
 
         private static bool _resolved;
 
+        private static bool _failed;
+
         /// <summary>
-        /// Asks the running game where its fields are, once, as soon as the data objects exist.
+        /// Whether every offset here was asked of the running game and answered.
+        ///
+        /// False until then, and false for the rest of the run after a name has come back missing.
+        /// A caller must not read any of these numbers unless this is true: an unresolved one is
+        /// -1, and -1 is not an offset — it is the object's own header.
+        /// </summary>
+        internal static bool Ready => _resolved;
+
+        /// <summary>
+        /// Asks the running game where its fields are, once, as soon as the data objects exist, and
+        /// answers whether every name resolved.
         ///
         /// Called every frame until it can run (see <c>SongCatalog.TryGetAssets</c>); after the first
-        /// success it is a single boolean. Every name here is one this mod's own dump shows, and every
-        /// answer is adopted — the game is the authority on its own layout. A name that does not
-        /// resolve keeps its constant and says so, which is the same shape as any other failure here:
-        /// a line in the log, not a value read from the wrong place.
+        /// answer it is a single boolean. Every name here is one this mod's own dump shows, and every
+        /// answer is adopted — the game is the authority on its own layout.
+        ///
+        /// <para>
+        /// A name that does not resolve is reported by <see cref="FieldResolver.Field"/> and leaves
+        /// its offset at -1; this then answers false, <b>latches</b>, and says what it costs: the
+        /// tables cannot be walked, so nothing that walks them runs. There is deliberately no retry
+        /// (a name does not appear at frame 900) and no fallback to the number this build was
+        /// reversed with (that number is exactly what a moved field makes wrong).
+        /// </para>
         /// </summary>
-        internal static void Resolve(IntPtr songData, IntPtr packData)
+        internal static bool Resolve(IntPtr songData, IntPtr packData)
         {
-            if (_resolved) return;
+            if (_failed) return false;
+            if (_resolved) return true;
 
-            SongData.AllSongs = FieldResolver.Field("SongData", "allSongInfo", SongData.AllSongs);
-            SongData.NameIndex = FieldResolver.Field("SongData", "_Efb", SongData.NameIndex);
-            SongData.Availability = FieldResolver.Field("SongData", "_Ffb", SongData.Availability);
-            PackData.Packs = FieldResolver.Field("PackData", "PackInfo", PackData.Packs);
+            // Every name is asked even after one has failed — the `&=` does not short-circuit — so
+            // that one run says all of what is missing rather than only the first of it.
+            bool ok = true;
 
-            Song.Id = FieldResolver.Field("SongInfo", "Id", Song.Id);
-            Song.BaseName = FieldResolver.Field("SongInfo", "BaseName", Song.BaseName);
-            Song.Charts = FieldResolver.Field("SongInfo", "ChartInfos", Song.Charts);
-            Song.PreviewStart = FieldResolver.Field("SongInfo", "PreviewStartSeconds", Song.PreviewStart);
-            Song.PreviewEnd = FieldResolver.Field("SongInfo", "PreviewEndSeconds", Song.PreviewEnd);
-            Song.TitleReading = FieldResolver.Field("SongInfo", "LocalizationToTitleReadingOverride", Song.TitleReading);
-            Song.ArtistReading = FieldResolver.Field("SongInfo", "ArtistReadingOverride", Song.ArtistReading);
-            Song.RewardStyle = FieldResolver.Field("SongInfo", "RewardStyle", Song.RewardStyle);
+            ok &= (SongData.AllSongs = FieldResolver.Field("SongData", "allSongInfo")) >= 0;
+            ok &= (SongData.NameIndex = FieldResolver.Field("SongData", "_Efb")) >= 0;
+            ok &= (SongData.Availability = FieldResolver.Field("SongData", "_Ffb")) >= 0;
+            ok &= (PackData.Packs = FieldResolver.Field("PackData", "PackInfo")) >= 0;
 
-            Chart.Id = FieldResolver.Field("SongChartInfo", "Id", Chart.Id);
-            Chart.Available = FieldResolver.Field("SongChartInfo", "Available", Chart.Available);
-            Chart.Difficulty = FieldResolver.Field("SongChartInfo", "Difficulty", Chart.Difficulty);
-            Chart.Designer = FieldResolver.Field("SongChartInfo", "DisplayChartDesigner", Chart.Designer);
-            Chart.JacketDesigner = FieldResolver.Field("SongChartInfo", "DisplayJacketDesigner", Chart.JacketDesigner);
-            Chart.Rating = FieldResolver.Field("SongChartInfo", "Rating", Chart.Rating);
-            Chart.Section = FieldResolver.Field("SongChartInfo", "LevelSectionIndicator", Chart.Section);
+            ok &= (Song.Id = FieldResolver.Field("SongInfo", "Id")) >= 0;
+            ok &= (Song.BaseName = FieldResolver.Field("SongInfo", "BaseName")) >= 0;
+            ok &= (Song.Charts = FieldResolver.Field("SongInfo", "ChartInfos")) >= 0;
+            ok &= (Song.PreviewStart = FieldResolver.Field("SongInfo", "PreviewStartSeconds")) >= 0;
+            ok &= (Song.PreviewEnd = FieldResolver.Field("SongInfo", "PreviewEndSeconds")) >= 0;
+            ok &= (Song.TitleReading = FieldResolver.Field("SongInfo", "LocalizationToTitleReadingOverride")) >= 0;
+            ok &= (Song.ArtistReading = FieldResolver.Field("SongInfo", "ArtistReadingOverride")) >= 0;
+            ok &= (Song.RewardStyle = FieldResolver.Field("SongInfo", "RewardStyle")) >= 0;
 
-            Pack.Id = FieldResolver.Field("PackInfo", "Id", Pack.Id);
-            Pack.Slug = FieldResolver.Field("PackInfo", "Slug", Pack.Slug);
-            Pack.Songs = FieldResolver.Field("PackInfo", "SongIds", Pack.Songs);
+            ok &= (Chart.Id = FieldResolver.Field("SongChartInfo", "Id")) >= 0;
+            ok &= (Chart.Available = FieldResolver.Field("SongChartInfo", "Available")) >= 0;
+            ok &= (Chart.Difficulty = FieldResolver.Field("SongChartInfo", "Difficulty")) >= 0;
+            ok &= (Chart.Designer = FieldResolver.Field("SongChartInfo", "DisplayChartDesigner")) >= 0;
+            ok &= (Chart.JacketDesigner = FieldResolver.Field("SongChartInfo", "DisplayJacketDesigner")) >= 0;
+            ok &= (Chart.Rating = FieldResolver.Field("SongChartInfo", "Rating")) >= 0;
+            ok &= (Chart.Section = FieldResolver.Field("SongChartInfo", "LevelSectionIndicator")) >= 0;
 
-            // The three strides, measured rather than assumed. Each needs the array it is a stride of,
-            // so they are taken here — the first moment the game's own data is in hand.
-            IntPtr songs = Memory.Ptr(songData + SongData.AllSongs);
-            Song.Size = FieldResolver.ElementSize(songs, "SongInfo.Size", Song.Size);
+            ok &= (Pack.Id = FieldResolver.Field("PackInfo", "Id")) >= 0;
+            ok &= (Pack.Slug = FieldResolver.Field("PackInfo", "Slug")) >= 0;
+            ok &= (Pack.Songs = FieldResolver.Field("PackInfo", "SongIds")) >= 0;
 
-            if (Memory.LooksLikeObject(songs) && Memory.I32(songs + Runtime.ArrayLength) > 0)
+            // The three strides, measured rather than assumed — and a stride that cannot be measured
+            // is a failure like any other, because a stride is what every walk over these arrays
+            // uses. Skipped entirely when a name has already failed: the reads below would be aimed
+            // with an offset that is -1.
+            if (ok)
             {
-                IntPtr first = songs + Runtime.ArrayDataOffset;
-                Chart.Size = FieldResolver.ElementSize(Memory.Ptr(first + Song.Charts),
-                                                       "SongChartInfo.Size", Chart.Size);
+                IntPtr songs = Memory.Ptr(songData + SongData.AllSongs);
+
+                Song.Size = FieldResolver.ElementSize(songs, "SongInfo.Size");
+                ok &= Song.Size > 0;
+
+                Chart.Size = FieldResolver.ElementSize(ChartTemplate(songs), "SongChartInfo.Size");
+                ok &= Chart.Size > 0;
+
+                Pack.Size = FieldResolver.ElementSize(Memory.Ptr(packData + PackData.Packs), "PackInfo.Size");
+                ok &= Pack.Size > 0;
             }
 
-            Pack.Size = FieldResolver.ElementSize(Memory.Ptr(packData + PackData.Packs),
-                                                  "PackInfo.Size", Pack.Size);
+            if (!ok)
+            {
+                _failed = true;
+                Diagnostics.Error("the game's song and pack tables could not be read by name in this build; " +
+                                  "no custom song will be registered");
+                return false;
+            }
 
             _resolved = true;
+            return true;
+        }
+
+        /// <summary>
+        /// The first song element whose `ChartInfos` is a live array — the one the chart stride is
+        /// measured off, and not necessarily element zero: the table has holes by design (a hole
+        /// carries id zero and no chart array), and a measurement asked of a hole measures nothing.
+        /// The walk is bounded by the array's own byte length, like every other walk here.
+        /// </summary>
+        private static IntPtr ChartTemplate(IntPtr songs)
+        {
+            if (!Memory.LooksLikeObject(songs)) return IntPtr.Zero;
+
+            int count = Memory.I32(songs + Runtime.ArrayLength);
+            long bytes = Memory.ArrayBytes(songs);
+            int stride = Song.Size;
+
+            for (int i = 0; i < count && stride > 0 && (long)(i + 1) * stride <= bytes; i++)
+            {
+                IntPtr charts = Memory.Ptr(songs + Runtime.ArrayDataOffset + i * stride + Song.Charts);
+                if (Memory.LooksLikeObject(charts) && Memory.I32(charts + Runtime.ArrayLength) > 0)
+                    return charts;
+            }
+
+            return IntPtr.Zero;
         }
     }
 }

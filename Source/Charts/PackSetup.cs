@@ -19,19 +19,32 @@ namespace InFalsusChartLoader
     /// </summary>
     internal static unsafe class PackSetup
     {
-        /// <summary>`DataAccess._NAb`, the pack visual table.</summary>
-        private const int StaticPackAssets = 0x88;
+        // No offsets are written in this file: every one is asked by name (`ResolveFields`), and each
+        // stays at `Offsets.Unresolved` (-1) until it answers. See `Offsets` for why a game offset
+        // is never a number here.
 
         /// <summary>`PackSelectSceneAssets.packToAssets` — resolved by name, see `ResolveFields`.</summary>
-        private static int PackAssetsTable = 0x18;
+        private static int PackAssetsTable = Offsets.Unresolved;
+
+        /// <summary>`DataAccess._NAb` — resolved with the rest, see `ResolveFields`.</summary>
+        private static int PackAssetsField = Offsets.Unresolved;
+
+        /// <summary>`DataAccess._mAb` — the localisation table, resolved with the rest.</summary>
+        private static int StringMappingField = Offsets.Unresolved;
 
         /// <summary>`PackData._SkA()`, which rebuilds the song-to-pack lookup.</summary>
         // (`PackData._SkA` — the lookup rebuild — is called by name; no RVA is kept for it.)
 
-        /// <summary>The pack visuals, or false while the game has not loaded them.</summary>
+        /// <summary>
+        /// The pack visuals, or false while the game has not loaded them — or when a name this file
+        /// reads by is not in this build, in which case <see cref="ResolveFields"/> has already said
+        /// which one and nothing here may be touched.
+        /// </summary>
         internal static bool TryGetVisuals(out IntPtr packAssets)
         {
             packAssets = IntPtr.Zero;
+
+            if (!ResolveFields()) return false;
 
             IntPtr klass = FieldResolver.ClassPointer("DataAccess");
             if (klass == IntPtr.Zero) return false;
@@ -39,11 +52,8 @@ namespace InFalsusChartLoader
             IntPtr statics = FieldResolver.Statics(klass);
             if (statics == IntPtr.Zero) return false;
 
-            packAssets = Memory.Ptr(statics + FieldResolver.Field("DataAccess", "_NAb", StaticPackAssets));
-            if (!Memory.LooksLikeObject(packAssets)) return false;
-
-            ResolveFields();
-            return true;
+            packAssets = Memory.Ptr(statics + PackAssetsField);
+            return Memory.LooksLikeObject(packAssets);
         }
 
         /// <summary>
@@ -148,11 +158,8 @@ namespace InFalsusChartLoader
             Diagnostics.Info("pack lookup rebuilt");
         }
 
-        /// <summary>`DataAccess._mAb`, the localisation table.</summary>
-        private const int StaticStringMapping = 0x70;
-
         /// <summary>`DynamicStringMapping.packIdTypeMapping`.</summary>
-        private static int PackIdTypeMapping = 0x18;
+        private static int PackIdTypeMapping = Offsets.Unresolved;
 
         /// <summary>
         /// The three mappings a song's own card text comes from.
@@ -161,38 +168,56 @@ namespace InFalsusChartLoader
         /// game shows them in different places, and it is keyed by the same `SongId` — so the write is
         /// the same call, against the field the dump lists as `jacketIllustratorNameTypeMapping`.
         /// </summary>
-        internal static int SongTitleTypeMapping = 0x30;
-        internal static int SongArtistTypeMapping = 0x38;
-        internal static int SongIllustratorTypeMapping = 0x78;
+        internal static int SongTitleTypeMapping = Offsets.Unresolved;
+        internal static int SongArtistTypeMapping = Offsets.Unresolved;
+        internal static int SongIllustratorTypeMapping = Offsets.Unresolved;
 
         private static bool _fieldsResolved;
 
+        private static bool _fieldsMissing;
+
         /// <summary>
-        /// Every field offset this file uses, asked of the running game by name, once.
+        /// Every field offset this file uses, asked of the running game by name, once, and whether
+        /// all of them answered.
         ///
         /// None of these is a property of the mod — they are properties of *this build of the game*,
         /// and a patch moves them without anything here failing loudly (a stale offset reads a
-        /// plausible-looking value from the wrong place). The constants above are only what this
-        /// build was reversed with; the game's answer is adopted, and a name that cannot be resolved
-        /// keeps its constant and says so in the log.
+        /// plausible-looking value from the wrong place). So a name that cannot be resolved is not
+        /// papered over with the constant this build was reversed with: it is reported by
+        /// <see cref="FieldResolver.Field"/>, this answers false and latches, and every write that
+        /// needs one of them is skipped — the pack keeps the game's own visuals and text, which is
+        /// visible, where a write through a wrong offset would not be.
         /// </summary>
-        private static void ResolveFields()
+        private static bool ResolveFields()
         {
-            if (_fieldsResolved) return;
+            if (_fieldsResolved) return true;
+            if (_fieldsMissing) return false;
 
-            PackAssetsTable = FieldResolver.Field("PackSelectSceneAssets", "packToAssets", PackAssetsTable);
+            PackAssetsTable = FieldResolver.Field("PackSelectSceneAssets", "packToAssets");
 
-            PackIdTypeMapping = FieldResolver.Field("DynamicStringMapping", "packIdTypeMapping",
-                                                    PackIdTypeMapping);
-            SongTitleTypeMapping = FieldResolver.Field("DynamicStringMapping", "songIdTitleTypeMapping",
-                                                       SongTitleTypeMapping);
-            SongArtistTypeMapping = FieldResolver.Field("DynamicStringMapping", "songIdArtistTypeMapping",
-                                                        SongArtistTypeMapping);
+            PackIdTypeMapping = FieldResolver.Field("DynamicStringMapping", "packIdTypeMapping");
+            SongTitleTypeMapping = FieldResolver.Field("DynamicStringMapping", "songIdTitleTypeMapping");
+            SongArtistTypeMapping = FieldResolver.Field("DynamicStringMapping", "songIdArtistTypeMapping");
             SongIllustratorTypeMapping = FieldResolver.Field("DynamicStringMapping",
-                                                             "jacketIllustratorNameTypeMapping",
-                                                             SongIllustratorTypeMapping);
+                                                             "jacketIllustratorNameTypeMapping");
+
+            // The two the pack's own objects carry, asked here rather than at each use: this is the
+            // only place either is wanted, and asking inside a loop would report a miss inside a loop.
+            PackAssetsField = FieldResolver.Field("DataAccess", "_NAb");
+            StringMappingField = FieldResolver.Field("DataAccess", "_mAb");
+
+            if (PackAssetsTable < 0 || PackIdTypeMapping < 0 || SongTitleTypeMapping < 0 ||
+                SongArtistTypeMapping < 0 || SongIllustratorTypeMapping < 0 ||
+                PackAssetsField < 0 || StringMappingField < 0)
+            {
+                _fieldsMissing = true;
+                Diagnostics.Error("the pack's fields could not be read by name in this build; the custom " +
+                                  "pack keeps the game's own visuals and text");
+                return false;
+            }
 
             _fieldsResolved = true;
+            return true;
         }
 
         /// <summary>
@@ -212,7 +237,11 @@ namespace InFalsusChartLoader
         private static readonly int ValueTraditionalChinese = 3 * IntPtr.Size;
         private static readonly int ValueSimplifiedChinese = 4 * IntPtr.Size;
 
-        private static int _mappingOffset;
+        /// <summary>
+        /// `Mapping`'s offset once asked, `int.MinValue` before, -1 when it could not be asked.
+        /// See <see cref="MappingOffset"/>.
+        /// </summary>
+        private static int _mappingOffset = int.MinValue;
 
         /// <summary>
         /// Gives the pack a name.
@@ -251,13 +280,19 @@ namespace InFalsusChartLoader
         /// <summary>The one write, shared by the pack's name and a song's title and artist.</summary>
         private static bool SetText(int mappingField, int id, string text, TextWhat what)
         {
+            // Asked here, before this method reads any of them: this is the funnel every write goes
+            // through, and `Inject` reaches it before anything asks for the pack's visuals — so
+            // without this line the three song-text writes run before the offsets have been asked
+            // for at all. False means a name is missing and has been reported; nothing is written.
+            if (!ResolveFields()) return false;
+
             IntPtr klass = FieldResolver.ClassPointer("DataAccess");
             if (klass == IntPtr.Zero) return false;
 
             IntPtr statics = FieldResolver.Statics(klass);
             if (statics == IntPtr.Zero) return false;
 
-            IntPtr mapping = Memory.Ptr(statics + FieldResolver.Field("DataAccess", "_mAb", StaticStringMapping));
+            IntPtr mapping = Memory.Ptr(statics + StringMappingField);
             if (!Memory.LooksLikeObject(mapping))
             {
                 NotWritten(what, "the localisation table is missing");
@@ -271,7 +306,10 @@ namespace InFalsusChartLoader
                 return false;
             }
 
-            IntPtr table = Memory.Ptr(typeMapping + MappingOffset());
+            int at = MappingOffset(typeMapping);
+            if (at < 0) return false;      // asked and reported where it was asked
+
+            IntPtr table = Memory.Ptr(typeMapping + at);
             if (!Memory.LooksLikeObject(table))
             {
                 NotWritten(what, $"the localisation table at +0x{mappingField:X} is missing");
@@ -311,29 +349,44 @@ namespace InFalsusChartLoader
         }
 
         /// <summary>
-        /// Where `StringTypeMapping&lt;T&gt;.Mapping` sits, asked of the game rather than assumed.
+        /// Where `StringTypeMapping&lt;T&gt;.Mapping` sits inside the instance being read — asked of
+        /// that instance's <b>own class</b>, which is the inflated generic the game is actually using
+        /// and therefore the only place the field has a real offset.
         ///
-        /// The type is generic and nested, so its generated simple name is not something to guess at:
-        /// every type whose name mentions it is tried, and any of them answers the same way because
-        /// they share a layout. The constant is the reversed answer, and it has to include the
-        /// object header the dump does not print — the dump's offsets for this type are relative to
-        /// the field area, so its 0x18 is this 0x28.
+        /// The dump cannot answer this one: `StringTypeMapping&lt;T&gt;` is generic, so its fields are
+        /// rendered at `0x0` there, and every candidate this mod can look up by name is a generic
+        /// definition whose fields have no layout. Asking the instance's class is the same route
+        /// `CustomResults` takes for the save container, which is generic for the same reason. The
+        /// constant this used to fall back to is gone: a name that cannot be asked leaves this at -1
+        /// and the write is not made (see <see cref="ResolveFields"/>).
         /// </summary>
-        private static int MappingOffset()
+        private static int MappingOffset(IntPtr typeMapping)
         {
-            if (_mappingOffset != 0) return _mappingOffset;
+            if (_mappingOffset != int.MinValue) return _mappingOffset;
 
+            IntPtr klass = Il2CppInterop.Runtime.IL2CPP.il2cpp_object_get_class(typeMapping);
+            if (klass != IntPtr.Zero)
+            {
+                IntPtr field = Il2CppInterop.Runtime.IL2CPP.il2cpp_class_get_field_from_name(klass, "Mapping");
+                if (field != IntPtr.Zero)
+                {
+                    int offset = (int)Il2CppInterop.Runtime.IL2CPP.il2cpp_field_get_offset(field);
+                    if (offset > 0)
+                    {
+                        Diagnostics.Info($"StringTypeMapping.Mapping is at 0x{offset:X}");
+                        return _mappingOffset = offset;
+                    }
+                }
+            }
+
+            // The old route, kept as a second chance for a build that declares a non-generic subclass
+            // somewhere in the index: a name found there is still a name, and still not a number
+            // typed into this file. A generic definition is skipped — its fields have no layout, and
+            // reflection refuses to read them (`ContainsGenericParameters`), which is why this walk
+            // never answered on the build it was written for.
             foreach (var entry in InteropTypeIndex.ByName())
             {
                 if (!entry.Key.Contains("StringTypeMapping")) continue;
-
-                // A generic definition is skipped rather than tried. Its field offsets only mean
-                // something for an instantiation, reflection refuses to read a field whose type still
-                // has parameters (`ContainsGenericParameters`), and the refusal arrives as an
-                // InvalidOperationException per attempt. Every candidate this index has is one of
-                // those — a generated name carries a backtick and a parameter count — so the attempt
-                // was three warning lines a session for an answer that could only ever be the
-                // fallback below.
                 if (entry.Key.IndexOf('`') >= 0) continue;
 
                 int offset = FieldResolver.Lookup(entry.Key, "Mapping");
@@ -344,9 +397,9 @@ namespace InFalsusChartLoader
                 }
             }
 
-            Diagnostics.Warn("StringTypeMapping.Mapping could not be resolved by name — every candidate " +
-                             "is a generic definition; using the reversed 0x28");
-            return _mappingOffset = 0x28;
+            Diagnostics.Error("StringTypeMapping.Mapping could not be found on its own class in this " +
+                              "build; the custom pack's texts will not be written");
+            return _mappingOffset = -1;
         }
 
         /// <summary>
