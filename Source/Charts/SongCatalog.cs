@@ -215,6 +215,20 @@ namespace InFalsusChartLoader
         /// </summary>
         internal static readonly HashSet<ushort> CustomSongIds = new HashSet<ushort>();
 
+        /// <summary>
+        /// The same songs, by id, with everything the `if` file said about them.
+        ///
+        /// The set above answers "is this ours"; this one answers "which folder is this", which the
+        /// illustrator needs: it is the one text the game shows per song while the `if` file may give
+        /// it per difficulty, so every time the game applies a difficulty the entry has to be put
+        /// level with it (see <see cref="ShowIllustrator"/>).
+        /// </summary>
+        internal static readonly Dictionary<ushort, ChartInfo> ById =
+            new Dictionary<ushort, ChartInfo>();
+
+        /// <summary>Which difficulty each song's illustrator entry currently shows.</summary>
+        private static readonly Dictionary<ushort, int> IllustratorShown = new Dictionary<ushort, int>();
+
         /// <summary>The pack's name in the pack list. The game shows this text.</summary>
         internal const string PackName = "IFCL";
 
@@ -350,11 +364,18 @@ namespace InFalsusChartLoader
                 ushort id = Memory.U16(slot + SongInfoId);
                 if (i < SlotsToCheck && id != 0 && id != (ushort)i)
                 {
-                    Diagnostics.Warn($"the song table does not index the way this build expects " +
-                                     $"(slot {i} carries id {id}, not {i}); " +
-                                     "the names the game already uses were not checked");
-                    taken.Clear();
-                    break;
+                    // Fail closed, which is what the comment above already claimed this did. The walk
+                    // cannot tell which string belongs to which slot, so the names the game already
+                    // has cannot be checked — and a song admitted under a name the game has is the one
+                    // failure this mod cannot afford: `_yOA` raises partway through its rebuild and
+                    // leaves every index it was building empty. This used to clear `taken` and carry
+                    // on, which is precisely the unchecked admission it was written to prevent.
+                    // Refusing costs this run's custom songs and says so; it cannot cost the game's
+                    // own tables.
+                    Diagnostics.Error($"the song table does not index the way this build expects " +
+                                      $"(slot {i} carries id {id}, not {i}); no custom song was " +
+                                      "registered, because their names cannot be checked against the game's");
+                    return admitted;
                 }
 
                 string text = Memory.Text(Memory.Ptr(slot + SongInfoBaseName));
@@ -423,6 +444,7 @@ namespace InFalsusChartLoader
                 // and any other numbering would have every song resolve to a different song.
                 int id = oldCount + i;
                 CustomSongIds.Add((ushort)id);
+                ById[(ushort)id] = charts[i];
                 IntPtr slot = songs + Offsets.Runtime.ArrayDataOffset + (oldCount + i) * SongInfoSize;
 
                 // Start from a real song so every field this mod does not set keeps a value the game
@@ -474,7 +496,15 @@ namespace InFalsusChartLoader
             // The ids are the slots the songs landed in, which is why this runs after the loop.
             var ids = new List<int>(charts.Count);
             for (int i = 0; i < charts.Count; i++) ids.Add(oldCount + i);
-            RewardEntries.Add(ids);
+
+            // The count matters: a song with no entry here sits in `allSongInfo` but is filtered out
+            // of the song list, which from the player's side is a song that does not exist. The
+            // reasons are Debug-build detail (`RewardEntries`); this line is the one a release keeps,
+            // because a missing song is the one thing nobody would otherwise be told.
+            int filed = RewardEntries.Add(ids);
+            if (filed < ids.Count)
+                Diagnostics.WarnRelease($"{ids.Count - filed} of {ids.Count} custom song(s) will not " +
+                                        "appear in the song list");
 
             // The song's title and artist as its card shows them: the localisation table, keyed by song
             // id — the same table the pack's name goes in, and the same write. See SetSongText. The
@@ -485,7 +515,14 @@ namespace InFalsusChartLoader
                 int id = oldCount + i;
                 PackSetup.SetSongText(PackSetup.SongText.Title, id, charts[i].Name);
                 PackSetup.SetSongText(PackSetup.SongText.Artist, id, charts[i].Composer);
-                PackSetup.SetSongText(PackSetup.SongText.Illustrator, id, charts[i].Illust);
+
+                // The illustrator is the one text the game shows per song rather than per difficulty,
+                // so this writes the first difficulty's value and `ShowIllustrator` keeps the entry
+                // level with the difficulty the game is on. Absent, it writes an empty string rather
+                // than nothing: the game hides the element that would show an illustrator when the
+                // entry is empty (`SongTransitionLayer._GA` tests its length), where a missing entry
+                // reads the literal `Missing String Mapping`. See `ChartInfo.Illustrators`.
+                PackSetup.SetSongText(PackSetup.SongText.Illustrator, id, IllustratorOf(charts[i], 0));
             }
 
             // Before the rebuild, because that rebuild indexes these bits by song position.
@@ -494,6 +531,51 @@ namespace InFalsusChartLoader
             Refresh(songData);
             AddPack(packData, songIds, charts.Count);
             return charts.Count;
+        }
+
+        /// <summary>
+        /// The illustrator to put on screen for one difficulty — the author's, or empty when they
+        /// named none. See `ChartInfo.Illustrators` for why empty rather than absent.
+        /// </summary>
+        private static string IllustratorOf(ChartInfo info, int difficulty) =>
+            info.Illustrators == null ? string.Empty : info.Illustrators[difficulty];
+
+        /// <summary>Whether the four illustrators are not all the same — the only case worth following.</summary>
+        private static bool VariesByDifficulty(ChartInfo info)
+        {
+            string[] names = info.Illustrators;
+            if (names == null) return false;
+
+            for (int i = 1; i < names.Length; i++)
+                if (names[i] != names[0]) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Puts the illustrator of the difficulty the game is applying into the localisation entry.
+        ///
+        /// The game looks an illustrator up by `SongId` — one string per song — while the `if` file
+        /// may name one per difficulty. The entry therefore has to move as the difficulty moves, and
+        /// the moment to move it is the call that applies one: the song select's `_MN`, which is
+        /// handed both the song and the difficulty, and which runs before everything that shows an
+        /// illustrator (the transition into the chart, the results screen).
+        ///
+        /// Written only when the value would change: `_MN` runs on every repaint, and a dictionary
+        /// write per repaint is work that buys nothing.
+        /// </summary>
+        internal static void ShowIllustrator(ushort songId, byte difficultyFlag)
+        {
+            int difficulty = -1;
+            for (int i = 0; i < DifficultyFlags.Length; i++)
+                if (DifficultyFlags[i] == difficultyFlag) { difficulty = i; break; }
+
+            if (difficulty < 0) return;
+            if (!ById.TryGetValue(songId, out ChartInfo info)) return;
+            if (!VariesByDifficulty(info)) return;   // one value for all four: registration's write stands
+            if (IllustratorShown.TryGetValue(songId, out int shown) && shown == difficulty) return;
+
+            if (PackSetup.SetSongText(PackSetup.SongText.Illustrator, songId, info.Illustrators[difficulty]))
+                IllustratorShown[songId] = difficulty;
         }
 
         /// <summary>
@@ -581,15 +663,17 @@ namespace InFalsusChartLoader
                 Memory.WritePtr(slot + ChartInfoId, Str(Path.GetFileName(info.ChartPaths[d])));
                 Memory.WriteU8(slot + ChartInfoAvailable, 1);
                 Memory.WriteU8(slot + ChartInfoDifficulty, DifficultyFlags[d]);
-                Memory.WritePtr(slot + ChartInfoDesigner, Str(info.Charter[d]));
+                Memory.WritePtr(slot + ChartInfoDesigner, Str(info.Charters[d]));
 
                 // `illust` is the jacket artist. Written for every difficulty, matching how the
-                // shipped charts carry the same name in all four -- though what they carry there is
-                // not a name: it is a localisation key (`jacketDesigner1`..`4`), and no code in the
-                // build reads this field at all. The card's illustrator is read from the localisation
-                // table instead, which SongCatalog's caller writes. So this is a faithful copy of the
-                // record's shape and nothing more; it is not what puts a name on screen.
-                Memory.WritePtr(slot + ChartInfoJacketDesigner, Str(info.Illust));
+                // shipped charts carry one value per difficulty there (`jacketDesigner1`..`4`) --
+                // though what the shipped charts carry is not a name but a localisation key, and no
+                // code in the build reads this field at all. The text that reaches the screen is the
+                // localisation table's, which `Inject` writes and `ShowIllustrator` keeps in step
+                // with the difficulty. So this is a faithful copy of the record's shape and nothing
+                // more; it is not what puts a name on screen, and it is empty rather than inherited
+                // when the author named no illustrator.
+                Memory.WritePtr(slot + ChartInfoJacketDesigner, Str(IllustratorOf(info, d)));
                 Memory.WriteI32(slot + ChartInfoRating, info.Level[d]);
 
                 // The heading this difficulty sorts under. See SectionBoundary.

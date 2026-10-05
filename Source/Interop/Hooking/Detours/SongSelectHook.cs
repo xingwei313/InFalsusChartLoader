@@ -122,6 +122,13 @@ namespace InFalsusChartLoader
                     // the recording writes, and reading it afterwards compares it with itself.
                     bool changed = Selection.Applying(self, songId, difficulty);
 
+                    // The illustrator is the one text the game shows per song while the `if` file can
+                    // give it per difficulty, so it follows the difficulty being applied. Here rather
+                    // than in `Applying` because it is not part of "which selection is in force" —
+                    // and it is written only when the value would change, which this call site cannot
+                    // know, so the deciding is inside. See `SongCatalog.ShowIllustrator`.
+                    SongCatalog.ShowIllustrator(songId, difficulty);
+
                     shadowed = Selection.ShadowUnlessSongChanged(self, songId, changed);
                     if (shadowed) ApplyReloaded++;
                 }

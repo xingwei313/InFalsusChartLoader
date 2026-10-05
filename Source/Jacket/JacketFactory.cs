@@ -145,10 +145,48 @@ namespace InFalsusChartLoader
         }
 
         /// <summary>
-        /// Builds a Material showing <paramref name="pngPath"/>. Zero, with a reason, when the file
-        /// is not a PNG this mod can decode or the game's own types cannot be reached.
+        /// Builds a Material showing the PNG at <paramref name="pngPath"/>. Zero, with a reason, when
+        /// the file is not a PNG this mod can decode or the game's own types cannot be reached.
+        ///
+        /// One build per file for the whole session, keyed by the path: a folder naming one picture
+        /// for all four difficulties asks four times, and a folder that points `background` at its
+        /// own `jacket` asks again from the other catalogue — four references to one texture is the
+        /// result in both cases, which is also what the game's own data does.
         /// </summary>
-        internal static IntPtr Build(string pngPath, out string reason)
+        internal static IntPtr Build(string pngPath, out string reason) =>
+            Build(pngPath, "jacket", out reason);
+
+        /// <summary>
+        /// The same, with the word the log line uses for what was built — a background is decoded by
+        /// the same code and should not be reported as a jacket. The word is <b>part of the cache
+        /// key</b>: a folder that points `background` at its own `jacket` asks twice for one file,
+        /// and the second ask must not be answered with the first's material — the jacket is drawn
+        /// on a card and the background on the game's backdrop quad, and only the backdrop one wants
+        /// the render queue below (`BackgroundQueue`). One more texture per such folder is what that
+        /// costs, and it was paid on the first run of this: the queue was set only for materials
+        /// built *as* backgrounds, the picture case shared the jacket's, and the queue it needed was
+        /// never set on anything.
+        /// </summary>
+        internal static IntPtr Build(string pngPath, string what, out string reason)
+        {
+            reason = null;
+
+            string key = what + "\n" + pngPath;
+            if (Built.TryGetValue(key, out IntPtr known)) return known;
+
+            IntPtr material = BuildUncached(pngPath, what, out reason);
+            if (material != IntPtr.Zero) Built[key] = material;
+            return material;
+        }
+
+        /// <summary>
+        /// Every build so far, by the word it was built for and its absolute path. Successes only —
+        /// a miss is not an answer.
+        /// </summary>
+        private static readonly Dictionary<string, IntPtr> Built =
+            new Dictionary<string, IntPtr>(StringComparer.Ordinal);
+
+        private static IntPtr BuildUncached(string pngPath, string what, out string reason)
         {
             reason = null;
 
@@ -185,10 +223,34 @@ namespace InFalsusChartLoader
             IntPtr texture = BuildTexture(image, out reason);
             if (texture == IntPtr.Zero) return IntPtr.Zero;
 
-            IntPtr material = BuildMaterial(texture, out reason);
+            IntPtr material = BuildMaterial(texture, what, out reason);
             if (material == IntPtr.Zero) return IntPtr.Zero;
 
-            Diagnostics.Info($"jacket '{Path.GetFileName(pngPath)}': {image.Width}x{image.Height}");
+            Diagnostics.Info($"{what} '{Path.GetFileName(pngPath)}': {image.Width}x{image.Height}");
+            return material;
+        }
+
+        /// <summary>
+        /// A Material showing a texture this mod did not decode — used by the video background, whose
+        /// picture arrives from a `VideoPlayer` as a render texture rather than from a file.
+        ///
+        /// The shader is chosen the same way and is allowed to be wrong for the same reason: what a
+        /// background consumer reads is the texture this material carries, and the rest of it is a
+        /// template the game copies from.
+        /// </summary>
+        internal static IntPtr BuildFromTexture(IntPtr texture, string what, out string reason)
+        {
+            reason = null;
+            if (!Resolve())
+            {
+#if DEBUG
+                reason = "the game's texture and material types could not be found";
+#endif
+                return IntPtr.Zero;
+            }
+
+            IntPtr material = BuildMaterial(texture, what, out reason);
+            if (material != IntPtr.Zero) Diagnostics.Info($"{what} material built over its own texture");
             return material;
         }
 
@@ -347,7 +409,58 @@ namespace InFalsusChartLoader
         /// it is reported, and the jacket is built anyway, because the alternative is no jacket at
         /// all over a property nothing looks at.
         /// </summary>
-        private static IntPtr BuildMaterial(IntPtr texture, out string reason)
+        /// <summary>
+        /// The render queue a background material is put in: one below the transparent layer every
+        /// UI and sprite shader uses.
+        ///
+        /// A background is the one material this mod puts on a quad the game also draws on — the
+        /// game's own backdrop (`Scene/Backgrounds/BackgroundObject`) — and the game draws its mask
+        /// layer (`Scene/Backgrounds/BackgroundDiamondContainer/BackgroundDiamondOutput`: the
+        /// hexagon-and-triangle art seen behind the track) at the same depth in the same queue, and
+        /// *before* that quad. Measured, not reasoned: with a background of this mod's in place —
+        /// video or plain picture, the material's own texture does not matter — that art disappears,
+        /// which an art drawn *after* the quad could not do. One queue under the 3000 layer puts this
+        /// material in front of the art, so the art stays on top of the picture, which is where it is
+        /// in a run the game gives no background to hide it.
+        /// </summary>
+        private const int BackgroundQueue = 2999;
+
+        /// <summary>The word <see cref="Build(string, string, out string)"/> uses for a background.</summary>
+        private const string BackgroundWhat = "background";
+
+        /// <summary>
+        /// Puts a material's render queue where the caller asked, asked by name like every other
+        /// property here. `Material.renderQueue` takes and answers an int, so the argument handed to
+        /// the invoker is the address of the value — the convention this file's `Invoke` was
+        /// measured against.
+        ///
+        /// A failure here is reported and the material is still returned: without it the background
+        /// is still a background, it just covers the game's own art the way every build before this
+        /// one did. That is the half worth saying out loud rather than failing the whole chart over.
+        /// </summary>
+        private static unsafe bool SetQueue(IntPtr material, int queue, out string reason)
+        {
+            reason = null;
+
+            IntPtr setter = Entry(_materialClass, "set_renderQueue", 1);
+            if (setter == IntPtr.Zero)
+            {
+#if DEBUG
+                reason = "Material.set_renderQueue could not be found";
+#endif
+                return false;
+            }
+
+            int storage = queue;
+            IntPtr* args = stackalloc IntPtr[1];
+            args[0] = (IntPtr)(&storage);
+            if (!Invoke(setter, material, args, 1, out reason)) return false;
+
+            Diagnostics.Info($"material render queue set to {queue}");
+            return true;
+        }
+
+        private static IntPtr BuildMaterial(IntPtr texture, string what, out string reason)
         {
             reason = null;
 
@@ -429,8 +542,22 @@ namespace InFalsusChartLoader
             textureArgs[0] = texture;
             if (!Invoke(setTexture, material, textureArgs, 1, out reason)) return IntPtr.Zero;
 
+            if (what == BackgroundWhat && !SetQueue(material, BackgroundQueue, out reason))
+            {
+                Diagnostics.Warn($"the background's render queue could not be set: {reason}");
+                if (!QueueWarned)
+                {
+                    QueueWarned = true;
+                    Diagnostics.WarnRelease("the background's render queue could not be set in this build; " +
+                                            "the game's own art behind the track will be covered");
+                }
+            }
+
             return material;
         }
+
+        /// <summary>Said once: the queue failure is per material, the consequence is per run.</summary>
+        private static bool QueueWarned;
 
         // ---------------------------------------------------------------- runtime plumbing
 

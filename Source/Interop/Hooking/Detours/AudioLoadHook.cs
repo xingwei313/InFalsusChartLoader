@@ -53,6 +53,16 @@ namespace InFalsusChartLoader
 
             IntPtr bga = MethodResolver.ByName("_hF", "_bGA");
             if (bga == IntPtr.Zero) return false;
+
+            // Every name this installer needs is settled before anything is attached, so a name the
+            // build does not have costs the whole group instead of leaving `_ZgA` attached and
+            // unjudged: the pair is one answer — the game finds the name, then reads the bytes — and
+            // the `_DJA` lookup used to be asked after the attach above it, which meant an early
+            // return there left a live hook that neither `Landed` ever looked at and that the
+            // `n/m hooks installed` count called missing.
+            IntPtr dja = MethodResolver.ByName("_BG", "_DJA");
+            if (dja == IntPtr.Zero) return false;
+
             CompleteRead = (delegate* unmanaged[Cdecl]<IntPtr, uint, void>)bga;
 
             byte[] zgAPrologue = Prologue(zgA);
@@ -64,9 +74,6 @@ namespace InFalsusChartLoader
             _zga.Attach();
             _zgaTramp = _zga.Trampoline;
             Diagnostics.Info("_J._hF._ZgA hooked");
-
-            IntPtr dja = MethodResolver.ByName("_BG", "_DJA");
-            if (dja == IntPtr.Zero) return false;
 
             byte[] djaPrologue = Prologue(dja);
             _dja = new NativeHook<DjaFn>

@@ -17,6 +17,7 @@ namespace InFalsusChartLoader
         internal static long I64(IntPtr p) => *(long*)p;
         internal static ushort U16(IntPtr p) => *(ushort*)p;
         internal static float F32(IntPtr p) => *(float*)p;
+        internal static double F64(IntPtr p) => *(double*)p;
         internal static byte U8(IntPtr p) => *(byte*)p;
         internal static IntPtr Ptr(IntPtr p) => *(IntPtr*)p;
         internal static void WriteI32(IntPtr p, int v) => *(int*)p = v;

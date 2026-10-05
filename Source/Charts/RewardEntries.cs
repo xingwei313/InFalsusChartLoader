@@ -40,7 +40,11 @@ namespace InFalsusChartLoader
                 if (klass == IntPtr.Zero) { Diagnostics.Warn("DataAccess could not be found; the custom songs will not be listed"); return 0; }
 
                 IntPtr statics = FieldResolver.Statics(klass);
-                if (statics == IntPtr.Zero) return 0;
+                if (statics == IntPtr.Zero)
+                {
+                    Diagnostics.Warn("DataAccess has no statics to read; the custom songs will not be listed");
+                    return 0;
+                }
 
                 int rewardField = FieldResolver.Field("DataAccess", "_iAb");
                 if (rewardField < 0) return 0;
@@ -100,8 +104,15 @@ namespace InFalsusChartLoader
                 IntPtr toA = MethodResolver.MethodInfoByRuntime("_NH", "_toA", "Game.dll", "ifapp.Game");
                 bool canTest = save != IntPtr.Zero && loA != IntPtr.Zero && toA != IntPtr.Zero;
                 if (!canTest)
-                    Diagnostics.Warn("the song's unlock state could not be asked of the game; the " +
-                                     "custom songs may be listed but not openable");
+                {
+                    // The one failure here whose consequence is not "missing from the list": the songs
+                    // are filed, and the play gate is the thing that will not be answerable. A song
+                    // that is listed but does not open is exactly what the person in front of the
+                    // game has to be told about, so this line ships; the rest of the reasons in this
+                    // method end in "not listed" and are covered by one shipping line at the call site.
+                    Diagnostics.WarnRelease("the song's unlock state could not be asked of the game; " +
+                                            "the custom songs may be listed but not openable");
+                }
 
                 uint story = 0;
                 int from = -1;

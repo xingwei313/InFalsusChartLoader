@@ -73,23 +73,45 @@ namespace InFalsusChartLoader
             // if the two disagree at registration, "song[N] base=" in the after-block says so.
             line($"kept '{Path(info)}' as '{info.BaseName}', audio index {audioIndex} ({audioBytes} bytes), " +
                  $"jackets built {jacketCount}");
-            line($"  name='{info.Name}' composer='{info.Composer}' illust='{info.Illust}'");
-            line($"  levels={string.Join("/", info.Level)} charters={string.Join("/", info.Charter)}");
+            line($"  name='{info.Name}' composer='{info.Composer}' illust={Names(info.Illustrators)}");
+            line($"  levels={string.Join("/", info.Level)} charters={string.Join("/", info.Charters)}");
             line($"  preview={info.PreviewStart}..{info.PreviewEnd}s");
-            line($"  audio={System.IO.Path.GetFileName(info.SongPath)} pictures={Pictures(info)}");
+            line($"  audio={System.IO.Path.GetFileName(info.SongPath)} jackets={Jackets(info)} " +
+                 $"background={Backgrounds(info)}");
         }
 
         /// <summary>
         /// The four jacket file names, and whether they are one file or several — the distinction
         /// that decides whether four materials were built or one.
         /// </summary>
-        private static string Pictures(ChartInfo info)
+        private static string Jackets(ChartInfo info)
         {
             var names = new List<string>(ChartInfo.Difficulties);
-            foreach (string path in info.PicturePaths) names.Add(System.IO.Path.GetFileName(path));
+            foreach (string path in info.JacketPaths) names.Add(System.IO.Path.GetFileName(path));
 
             int distinct = new HashSet<string>(names, StringComparer.Ordinal).Count;
             return string.Join(", ", names) + (distinct == 1 ? "  (one file)" : $"  ({distinct} files)");
+        }
+
+        /// <summary>
+        /// The in-play backgrounds, or a word saying the author named none — the difference between
+        /// "the game's own background" and "a background that failed to build" has to be readable
+        /// from the import block, because the two look the same on screen.
+        /// </summary>
+        private static string Backgrounds(ChartInfo info)
+        {
+            if (info.BackgroundPaths == null) return "(none; the game's own)";
+
+            var names = new List<string>(ChartInfo.Difficulties);
+            foreach (string path in info.BackgroundPaths) names.Add(System.IO.Path.GetFileName(path));
+            return string.Join(", ", names);
+        }
+
+        /// <summary>A list of names, or "(none)" — for the optional fields, where null is an answer.</summary>
+        private static string Names(string[] values)
+        {
+            if (values == null) return "(none)";
+            return string.Join(", ", values);
         }
 
         // ---------------------------------------------------------------- three: the tables
@@ -159,6 +181,26 @@ namespace InFalsusChartLoader
             // that separates a stall from a frame loop in one glance.
             (Hooks.WaitProgress() is string waiting ? $" wait={waiting}" : "") + " " +
             $"jackets={JacketCatalog.Asked}/{JacketCatalog.Claimed} " +
+            // The in-play backgrounds: how many songs have one of their own, what the one video
+            // player is doing, and how many chart starts set it running. `vid=load` that never
+            // becomes `ready` is a clip this machine cannot open — a codec question, not a mod one —
+            // and `vid=fail` is a player that could not be built at all. Neither is visible on
+            // screen (the game's own background shows instead), which is why both are here.
+            //
+            // `cs` is the game's starting sequence handing the play over to the running chart
+            // (`GameScene._rk`), and `vidN` is the clip actually starting with it: `cs` moving while
+            // `vidN` stands still is a chart that began without its clip, and `vidN` counting up once
+            // per play is what a retry restarting the clip looks like.
+            //
+            // `hold` is the pause pair: times the game paused its own music and the clip was held
+            // with it, over times the music came back and the clip followed. Both should count once
+            // per pause and resume of a custom play with a clip, and neither should move for a
+            // shipped song. (`Hooks.MusicResumes` is deliberately not shown: it counts every fade the
+            // music goes through, which is not the same question.)
+            $"backgrounds={BackgroundCatalog.Count} cs={Hooks.ChartStarts} " +
+            $"vid={VideoBackground.State} vidN={VideoBackground.Starts} " +
+            $"vidskew={VideoBackground.Skew:F3} " +
+            $"hold={VideoBackground.Holds}/{VideoBackground.Resumes} " +
             $"reads={AudioCatalog.Served}/{AudioCatalog.ServedBytes} " +
             // The custom results: every record read and the ones answered from this mod's own table,
             // every merge and the ones that landed there, and the writes of `IFCL.sav` that went

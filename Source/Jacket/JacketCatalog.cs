@@ -203,7 +203,7 @@ namespace InFalsusChartLoader
 
             for (int d = 0; d < materials.Length; d++)
             {
-                string path = info.PicturePaths[d];
+                string path = info.JacketPaths[d];
 
                 if (!built.TryGetValue(path, out IntPtr material))
                 {

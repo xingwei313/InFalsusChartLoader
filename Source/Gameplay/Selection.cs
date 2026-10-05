@@ -181,6 +181,21 @@ namespace InFalsusChartLoader
         /// <summary>`SongSelectScene._Sr` — the difficulty the player has selected, on the scene itself.</summary>
         private static int SceneDifficulty = Offsets.Unresolved;
 
+        // ---- the difficulty the game itself is on, off the save ----
+        //
+        // Four offsets, all asked by name: `_NH._DEb` (the container), the container's own `_iEb`
+        // (its object field — the class is generic, so only the instance's class has a layout), then
+        // `SingleFileSaveDataV2.GeneralSaveState` and `GeneralSaveStateV5.LastSelectedDifficulty`.
+        // The route is the game's own getter for that field, `_NH._gOA`, which is
+        // `[container + 0x10] + 0x38`; see `FromSave` for what it is for.
+
+        private static int SaveContainer = Offsets.Unresolved;
+        private static int SaveObject = Offsets.Unresolved;
+        private static int SaveState = Offsets.Unresolved;
+        private static int SaveDifficulty = Offsets.Unresolved;
+        private static IntPtr _saveClass;
+        private static bool _saveMissing;
+
         private static IntPtr _songSelectClass;
 
         // ---- the selection the game is applying, taken from the call that applies it ----
@@ -320,18 +335,108 @@ namespace InFalsusChartLoader
         /// <summary>
         /// The selected difficulty as 0..3, or -1 when there is not one.
         ///
-        /// Three sources, in order, and the order is the whole of it: the selection the game last
-        /// applied (above), the payload, and the scene. See <see cref="Applying"/> for why the first
-        /// one wins — the other two are the older answers to the same question, kept because the
-        /// selection record is only written once the song select has run.
+        /// Four sources, in order, and the order is the whole of it: the selection the game last
+        /// applied (above), the save's own current difficulty, the payload, and the scene.
+        /// <see cref="Applying"/> says why the first one wins; <see cref="FromSave"/> says what the
+        /// second one is for — it is the answer the game's own screens use, and the only one that
+        /// exists on the hub before anything has been applied.
         /// </summary>
         internal static int Difficulty()
         {
             if (_applied >= 0) return _applied;
 
+            int saved = FromSave();
+            if (saved >= 0) return saved;
+
             if (TryRead(out IntPtr _, out int difficulty)) return difficulty;
 
             return FromScene();
+        }
+
+        /// <summary>
+        /// The difficulty the game itself is on, read off the save.
+        ///
+        /// <para>
+        /// The value lives in `GeneralSaveStateV5.LastSelectedDifficulty`, and the game's own screens
+        /// read it through <c>_NH._CoA()</c>: the song select takes its difficulty from there when it
+        /// opens, the pack screen applies it on entry, and — the reason this exists — the hub filters
+        /// the songs its random jacket is drawn from by it before asking for a picture. That last one
+        /// is the hole this fills: on the hub, in a run where nothing has been applied yet, the other
+        /// three sources have no answer (the selection record starts empty, the payload is written by
+        /// the play handler, and the scene is not up), so a song with a picture per difficulty showed
+        /// none. The save is loaded from the first frame, so it answers there.
+        /// </para>
+        /// <para>
+        /// It ranks below the applied selection on purpose: a difficulty the player just switched to
+        /// is applied before the game writes it back, so the record is the fresher of the two.
+        /// </para>
+        /// </summary>
+        private static int FromSave()
+        {
+            if (_saveMissing) return -1;
+
+            // The class is remembered, not asked again: this runs from the jacket path while nothing
+            // has been applied yet — the hub's first draws — and the lookup behind it allocates.
+            if (_saveClass == IntPtr.Zero) _saveClass = FieldResolver.ClassPointer("_NH");
+            if (_saveClass == IntPtr.Zero) return -1;   // not yet, the same as everywhere else
+
+            IntPtr statics = FieldResolver.Statics(_saveClass);
+            if (statics == IntPtr.Zero) return -1;
+
+            IntPtr save = Memory.Ptr(statics);
+            if (!Memory.LooksLikeObject(save)) return -1;
+
+            if (SaveContainer == Offsets.Unresolved)
+            {
+                SaveState = FieldResolver.Field("SingleFileSaveDataV2", "GeneralSaveState");
+                SaveDifficulty = FieldResolver.Field("GeneralSaveStateV5", "LastSelectedDifficulty");
+                SaveContainer = FieldResolver.Field("_NH", "_DEb");
+
+                if (SaveState < 0 || SaveDifficulty < 0 || SaveContainer < 0)
+                {
+                    _saveMissing = true;
+                    Diagnostics.Error("the save's difficulty could not be read by name in this build; " +
+                                      "which difficulty is selected will not be known before the " +
+                                      "song select has been visited");
+                    return -1;
+                }
+            }
+
+            IntPtr container = Memory.Ptr(save + SaveContainer);
+            if (!Memory.LooksLikeObject(container)) return -1;
+
+            if (SaveObject == Offsets.Unresolved)
+            {
+                // `_iEb` is on `_NH._OH<T>` — a generic, whose fields the dump renders at 0x0 and
+                // whose definition has no layout to ask about. Asked of the instance's own class,
+                // the same route `CustomResults` takes for the same reason.
+                SaveObject = FieldOn(container, "_iEb");
+                if (SaveObject < 0) { _saveMissing = true; return -1; }
+            }
+
+            IntPtr data = Memory.Ptr(container + SaveObject);
+            if (!Memory.LooksLikeObject(data)) return -1;
+
+            return IndexOf(Memory.U8(data + SaveState + SaveDifficulty));
+        }
+
+        /// <summary>
+        /// A field's offset on one instance's own class, asked by name, or -1 — the shape
+        /// `CustomResults.FieldOn` uses, for the same reason: a generic's field has no offset
+        /// anywhere the dump or a definition can answer.
+        /// </summary>
+        private static int FieldOn(IntPtr instance, string name)
+        {
+            IntPtr klass = Il2CppInterop.Runtime.IL2CPP.il2cpp_object_get_class(instance);
+            if (klass == IntPtr.Zero) { Diagnostics.Error($"{name}: no class to ask in this build"); return -1; }
+
+            IntPtr field = Il2CppInterop.Runtime.IL2CPP.il2cpp_class_get_field_from_name(klass, name);
+            if (field == IntPtr.Zero) { Diagnostics.Error($"{name}: no field by that name in this build"); return -1; }
+
+            int offset = (int)Il2CppInterop.Runtime.IL2CPP.il2cpp_field_get_offset(field);
+            if (offset <= 0) { Diagnostics.Error($"{name}: no field by that name in this build"); return -1; }
+
+            return offset;
         }
 
         /// <summary>

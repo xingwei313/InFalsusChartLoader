@@ -16,7 +16,7 @@ namespace InFalsusChartLoader
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Seventeen detours, installed by eight functions. Eight of them exist because a custom song
+    /// Twenty detours, installed by ten functions. Eight of them exist because a custom song
     /// needs the game to accept something it has no path for — a name it will look up, a byte range
     /// it will read, a picture it cannot reach. Each of those answers, and each is on a hot path, so
     /// each stays thin. One more answers for this mod's pack at the single accessor every read of a
@@ -26,7 +26,13 @@ namespace InFalsusChartLoader
     /// changes what the game does around a call it is making, so that a difficulty change reaches
     /// the pictures: one widens the song-select's own reload to include a difficulty change, the
     /// other rebuilds the pack screen's cards, which that screen never asks the game to rebuild.
-    /// And four keep the custom songs' results out of the game's own save — the two reads of a
+    /// One drives nothing of the game's at all: it is the game's starting sequence handing over to
+    /// the running chart — the moment the chart starts — and its only work is setting this mod's
+    /// in-play background clip running with it, so that a play and a retry both begin the picture at
+    /// its first frame; see <see cref="VideoBackground"/>. Two more drive nothing either: they watch
+    /// the scene's own music being paused and resumed — `_Dg._hiA` and `._HiA`, the calls the pause
+    /// entry and the resume delegate make — and hold that same clip level with it. And four keep the custom songs' results out of the game's own
+    /// save — the two reads of a
     /// song's record and the one merge, on `GameResultsV4`, answered from a table of this mod's own,
     /// and the encounter result's writer, whose call is not made at all for a custom play; see
     /// <see cref="CustomResults"/>.
@@ -138,6 +144,35 @@ namespace InFalsusChartLoader
         /// <summary>谱面内背景（`_UmA`）。与曲绘分开计数，因为"背景换了、卡片没换"是它独有的形状。</summary>
         internal static long UmaCalls, UmaArmed;
 
+        /// <summary>
+        /// Background requests for a song of this mod's that had a background named and could not
+        /// produce one — a still that would not decode, a clip whose player would not build, or a
+        /// per-difficulty background asked for before the difficulty is known.
+        ///
+        /// Beside the armed count for the reason <see cref="ApaAsked"/> is: a request that was
+        /// answered and a request that never happened both leave <see cref="UmaArmed"/> standing
+        /// still, and "no background was named" — the usual case — is silent on purpose.
+        /// </summary>
+        internal static long UmaUnset;
+
+        /// <summary>
+        /// Chart starts: the game's starting sequence handing over to the running chart
+        /// (`GameScene._rk`, the call every path of `GameScene._UB.MoveNext` ends on), which is where
+        /// the in-play clip is set running. Kept beside the clip's own count
+        /// (`VideoBackground.Starts`) because the two mean different things — a run of shipped songs
+        /// moves this one and not that one.
+        /// </summary>
+        internal static long ChartStarts;
+
+        /// <summary>
+        /// The scene's own music being paused and taken up again — `_Dg._hiA` / `_Dg._KiA` — which
+        /// is what this mod's in-play clip follows (see <see cref="VideoBackground"/>). `MusicPauses`
+        /// is one per pause; `MusicResumes` counts every fade the music goes through, not only the
+        /// one that answers a pause — the clip's own `Holds`/`Resumes` beside them are the pair that
+        /// says what actually followed.
+        /// </summary>
+        internal static long MusicPauses, MusicResumes;
+
 #if DEBUG
         // ---- what the detours' own bodies cost ------------------------------------------------
         // A screen that stutters has to be attributable, so these accumulate the ticks spent inside
@@ -173,6 +208,8 @@ namespace InFalsusChartLoader
 
             // The chart hook goes first: without it nothing the mod contributes can be loaded at all.
             Count(InstallChartLoad());
+            Count(InstallChartStart());
+            Count(InstallPause());
             Count(InstallAudioLoad());
             Count(InstallJacket());
             Count(InstallSongSelect());
@@ -198,6 +235,8 @@ namespace InFalsusChartLoader
             DetachSongSelect();
             DetachJacket();
             DetachAudioLoad();
+            DetachPause();
+            DetachChartStart();
             DetachChartLoad();
         }
 
@@ -250,6 +289,9 @@ namespace InFalsusChartLoader
             ChartReference,
             ChartMaterial,
             Background,
+            ChartStart,
+            MusicPause,
+            MusicResume,
             SongSelectApply,
             PackVisual,
             PackRow,
@@ -304,6 +346,9 @@ namespace InFalsusChartLoader
             Hook.ChartReference => "SongData._ZOA",
             Hook.ChartMaterial => "AddressableHandleAutoReleaser._LIA",
             Hook.Background => "GameplayBackgrounds._UmA",
+            Hook.ChartStart => "GameScene._rk",
+            Hook.MusicPause => "_Dg._hiA",
+            Hook.MusicResume => "_Dg._KiA",
             Hook.SongSelectApply => "SongSelectScene._MN",
             Hook.PackVisual => "PackVisualMemberLarge._vc",
             Hook.PackRow => "the pack row accessor (SongSelectPackAssets[])",

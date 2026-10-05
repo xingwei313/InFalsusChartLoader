@@ -41,13 +41,19 @@ Debug构建产物位于 `bin/Debug/InFalsusChartLoader.dll`。
   "name": "music",                            //曲名
   "composer": "I don’t know",                 //曲师
   "song": "music.mp3",                        //歌曲文件，接受ogg、mp3、wav
-  "illust": "I don’t know",                   //曲绘画师
-  "picture": "bg.png",                        //曲绘，只接受png，需要为正方形
-  //"picture": ["bg.png", "gb.png", "gg.png", "bb.png"],
+  "illust": "I don’t know",                   //曲绘画师；为可选参数
+  //"illust": ["I don’t know!", "I know!", "oh!", "hey?"],
+  //也可以为每张曲绘单独设置画师[Minimal,Evolved,Ultimate,Forbidden]
+  "jacket": "jkt.png",                        //曲绘，只接受png，需要为正方形
+  //"picture": ["jkt.png", "jtk.png", "kjt.png", "ktj.png"],
   //也可以为每张谱面单独设置曲绘[Minimal,Evolved,Ultimate,Forbidden]
+  "background": "bg.mp4",
+  //谱面内的背景，接受png与mp4；为可选参数
+  //"background": ["bg.png", "gb.mp4", "gg.png", "bb.mp4"],
+  //也可以为每张谱面单独设置背景[Minimal,Evolved,Ultimate,Forbidden]
   "preview_seconds": ["0", "60"],
   //预览音频时间[开始,结束]，以秒计算
-  "Charter": ["Skytarry", "MagicNeko", "XingWei", "Xing_W"],
+  "charter": ["Skytarry", "MagicNeko", "XingWei", "Xing_W"],
   //谱师[Minimal,Evolved,Ultimate,Forbidden]
   "chart": ["temp.spc", "dummy.spc", "untitled.spc", "chart.spc"],
   //谱面文件，不兼容demo格式[Minimal,Evolved,Ultimate,Forbidden]
@@ -55,17 +61,23 @@ Debug构建产物位于 `bin/Debug/InFalsusChartLoader.dll`。
   //谱面难度[Minimal,Evolved,Ultimate,Forbidden]
 }
 ```
+
 文件夹示例：
 ```
 Charts
       `-- chart
-          |-- bb.png
+          |-- bb.mp4
+          |-- bg.mp4
           |-- bg.png
           |-- chart.spc
           |-- dummy.spc
-          |-- gb.png
+          |-- gb.mp4
           |-- gg.png
           |-- if
+          |-- jkt.png
+          |-- jtk.png
+          |-- kjt.png
+          |-- ktj.png
           |-- music.mp3
           |-- temp.spc
           `-- untitled.spc

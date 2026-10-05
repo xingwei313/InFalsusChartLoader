@@ -23,7 +23,7 @@ namespace InFalsusChartLoader
     /// not contain it, which is the visible form of "非法则不导入".
     /// </description></item>
     /// <item><description>
-    /// <b>Hook.</b> Seventeen detours, installed by eight functions before the game can ask for
+    /// <b>Hook.</b> Twenty detours, installed by ten functions before the game can ask for
     /// anything. Eight of them answer for something — the chart, the audio (a name and a read), and
     /// the pictures (three reference getters and two loaders, all sharing one handshake). One more
     /// answers for this mod's pack at the single place the game reads a pack's row of visuals, giving
@@ -31,7 +31,12 @@ namespace InFalsusChartLoader
     /// count: the play gate and the scene switch say whether the game took each step, which is not
     /// something the decompilation can be read for. Two change what the game does around a call
     /// it makes, so that a difficulty change reaches the pictures — one on the song select, one on
-    /// the pack screen. And four keep a custom song's results out of the game's own save: three give
+    /// the pack screen. One more drives nothing of the game's: it is the game's starting sequence
+    /// handing over to the running chart — the moment the chart starts — and it sets this mod's
+    /// in-play background clip running from there, so that a play and a retry both begin the picture
+    /// at its first frame. Two more watch the scene's own music being paused and resumed, and hold
+    /// that clip level with it. And four
+    /// keep a custom song's results out of the game's own save: three give
     /// them a table of their own, and one drops the encounter result the settlement would otherwise
     /// write. See <see cref="Hooks"/>.
     /// </description></item>
@@ -117,6 +122,10 @@ namespace InFalsusChartLoader
         /// </summary>
         public override void OnUpdate()
         {
+            // The one thing this mod has that runs every frame while a chart does: the in-play clip
+            // is started and kept on the game's own chart clock from here — see `VideoBackground`.
+            VideoBackground.Follow();
+
 #if DEBUG
             // About every ten seconds. A run that never gets past the menu still says, from here,
             // whether each hook was called and what it answered.
@@ -152,8 +161,12 @@ namespace InFalsusChartLoader
                 List<ChartInfo> named = SongCatalog.SettleNames(_imported, songData);
                 if (named.Count == 0)
                 {
+                    // Two ways to arrive here and the reason is on the lines above either way: a
+                    // per-song warning when a name the game already has refused it, or the error
+                    // saying the song table could not be walked. "Filed under its name" was only
+                    // ever one of the two.
                     _registered = true;
-                    Diagnostics.Error("no custom song could be filed under its name");
+                    Diagnostics.Error("no custom song could be registered");
                     return;
                 }
 
@@ -313,6 +326,13 @@ namespace InFalsusChartLoader
             // time instead, and a song whose audio cannot be registered is dropped there.
             if (!JacketCatalog.Add(info, out string jacketReason))
                 Diagnostics.Warn($"'{info.Name}' has no jacket of its own: {jacketReason}");
+
+            // The in-play backgrounds, built here for the same reason and with the same tolerance:
+            // a picture that cannot be decoded is decided now, before the song is ever played, and
+            // costs that difficulty its background rather than the song. A clip is not opened here —
+            // see BackgroundCatalog.Add — so nothing about the video module is touched at import.
+            if (!BackgroundCatalog.Add(info, out string backgroundReason))
+                Diagnostics.Warn($"'{info.Name}' has no background of its own: {backgroundReason}");
 
 #if DEBUG
             // Only once every check above has passed, so the line means "this folder is in" rather

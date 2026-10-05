@@ -101,14 +101,16 @@ namespace InFalsusChartLoader
         /// `AssetReferenceT&lt;Material&gt; GameplayBackgrounds._UmA(GameplayBackground)`
         ///
         /// What the inside of a chart is drawn on. The player's own choice is a small enum — the
-        /// background is one of a handful of shipped scenes — and the picture that goes with a
-        /// custom song is neither in that set nor in the game's catalogue, so it takes the same
-        /// route as a jacket: hand back a reference the game can load, and substitute the material
-        /// when the load arrives.
+        /// background is one of a handful of shipped scenes — and the enum stays untouched: the
+        /// picture a custom song wants is neither in that set nor in the game's catalogue, so it takes
+        /// the same route as a jacket: hand back a reference the game can load, and substitute the
+        /// material when the load arrives.
         ///
-        /// It is the third getter to arm the same handshake, and it is here rather than in a file of
-        /// its own because what it arms with comes from the jacket catalogue -- a song's background
-        /// is its picture.
+        /// Since the v3 format the substitution happens only when the `if` file names a `background`
+        /// for the difficulty being played — a still or a clip (see `BackgroundCatalog`). A song that
+        /// names none keeps the game's own background, which is what "optional" means for this
+        /// field; the older behaviour, where a song's jacket doubled as its background, is gone with
+        /// the format.
         /// </summary>
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate IntPtr UmaFn(IntPtr backgrounds, int background, IntPtr methodInfo);
@@ -130,6 +132,10 @@ namespace InFalsusChartLoader
             _apa.Attach();
             _apaTramp = _apa.Trampoline;
             Diagnostics.Info("SongData._apA hooked");
+
+            // Judged here, right after its own attach: it used to be judged after the loader below,
+            // so a loader that would not resolve left this attach unreported as well as uncounted.
+            bool ok = Landed(Hook.JacketReference, reference, referencePrologue);
 
             // Through the runtime, not through reflection, and with no RVA to fall back to. Both
             // halves of that are deliberate for a generic method:
@@ -155,6 +161,11 @@ namespace InFalsusChartLoader
                                                    Image, Namespace);
             if (load == IntPtr.Zero)
             {
+                // Reported, and the install carries on: this loader serves the song-list cards, while
+                // the three installs below answer at their own call sites — the loading screen, the
+                // results screen and the in-play background. An early return here used to take all
+                // three down with it, and to leave the `_apA` attach above unjudged.
+                //
                 // "could not be found" rather than "could not be resolved": this line ships in Release,
                 // and build.bat's artifact check keeps `could not be resolved` on its bad list because
                 // that phrase belongs to a Debug-only offset warning, which a release does not carry.
@@ -162,27 +173,26 @@ namespace InFalsusChartLoader
                 // wording the rest of this mod's shipping errors use.
                 Diagnostics.Error("AddressableHandleAutoReleaser._MIA could not be found; custom " +
                                   "jackets will not be substituted onto the song list");
-                return false;
             }
-
+            else
+            {
 #if DEBUG
-            // What the runtime handed over, so that "resolved" and "resolved to something callable"
-            // stop being the same word in the log.
-            Diagnostics.Info($"  the method's first words: {JacketFactory.Words(load, 4)}");
+                // What the runtime handed over, so that "resolved" and "resolved to something callable"
+                // stop being the same word in the log.
+                Diagnostics.Info($"  the method's first words: {JacketFactory.Words(load, 4)}");
 #endif
 
-            byte[] loadPrologue = Prologue(load);
-            _mia = new NativeHook<MiaFn>
-            {
-                Target = load,
-                Detour = (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, byte, IntPtr, IntPtr>)&MiaDetour,
-            };
-            _mia.Attach();
-            _miaTramp = _mia.Trampoline;
-            Diagnostics.Info("AddressableHandleAutoReleaser._MIA hooked");
-
-            bool ok = Landed(Hook.JacketReference, reference, referencePrologue);
-            ok &= Landed(Hook.JacketMaterial, load, loadPrologue);
+                byte[] loadPrologue = Prologue(load);
+                _mia = new NativeHook<MiaFn>
+                {
+                    Target = load,
+                    Detour = (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, byte, IntPtr, IntPtr>)&MiaDetour,
+                };
+                _mia.Attach();
+                _miaTramp = _mia.Trampoline;
+                Diagnostics.Info("AddressableHandleAutoReleaser._MIA hooked");
+                ok &= Landed(Hook.JacketMaterial, load, loadPrologue);
+            }
 
             // 另外两条。少了它们，只有选曲卡片有图、别的界面都退回游戏的兜底 —— 这正是被发现
             // 时的形状：选曲界面有曲绘，加载界面没有。曲绘不是一个入口，是 2×2：
@@ -435,10 +445,12 @@ namespace InFalsusChartLoader
         }
 
         /// <summary>
-        /// 谱面内背景的取引用那一半：是我们的歌就把刚拿到的引用记下来，等它被加载时替换成曲绘。
+        /// 谱面内背景的取引用那一半：是我们的歌、而且这一难度有 `background` 时才替换。
         ///
         /// 认歌用的是"游戏当前选中的歌"，因为参数里只有一个背景枚举。拿不到选中项（还没选到歌）时
-        /// 什么都不做 —— 那种情况下这局也不是我们的歌。
+        /// 什么都不做 —— 那种情况下这局也不是我们的歌。要什么由 `BackgroundCatalog` 决定：是静态
+        /// 图就是它建好的材质，是视频就先去把播放器点起来（见 `VideoBackground`）；作者没写
+        /// `background` 就什么都不 arm，游戏画它自己的背景。
         /// </summary>
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static IntPtr UmaDetour(IntPtr backgrounds, int background, IntPtr methodInfo)
@@ -452,13 +464,31 @@ namespace InFalsusChartLoader
                 {
                     // 免门读法：带门的 `TryRead` 要那格难度字节，而游戏从不写它（V8 §3、`HANG_HANDOFF`
                     // §9.2 量的）⇒ 门恒假、这条替换就永远不会 arm。难度由 `Find` 自己取（`_applied` 优先）。
-                    if (Selection.TryReadSong(out IntPtr song) &&
-                        JacketCatalog.Find(song, out IntPtr material))
+                    string why = null;
+                    var entry = default(BackgroundCatalog.Entry);
+                    bool armed = Selection.TryReadSong(out IntPtr song) &&
+                                 BackgroundCatalog.Find(song, Selection.Difficulty(),
+                                                        out entry, out why);
+
+                    if (armed)
                     {
-                        JacketCatalog.Arm(fallback, material);
+                        JacketCatalog.Arm(fallback, entry.Material);
                         UmaArmed++;
                     }
-                    else JacketCatalog.Disarm();
+                    else
+                    {
+                        JacketCatalog.Disarm();
+
+                        // 上一首的视频不该在这首里继续跑：无论这次是"没写 background"还是"写了但
+                        // 没建成"，这一局要的都只是游戏自己的背景。
+                        VideoBackground.Stop();
+
+                        if (why != null)
+                        {
+                            UmaUnset++;
+                            Diagnostics.Warn($"the in-play background was not replaced: {why}");
+                        }
+                    }
                 }
                 catch (Exception e)
                 {

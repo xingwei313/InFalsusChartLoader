@@ -12,7 +12,7 @@ namespace InFalsusChartLoader
     /// <remarks>
     /// The four difficulties are positional, matching the game's own difficulty slots:
     /// index 0 = Minimal, 1 = Evolved, 2 = Ultimate, 3 = Forbidden. That is why <c>chart</c>,
-    /// <c>Charter</c> and <c>lv</c> must all be exactly four long — a folder cannot describe three
+    /// <c>charter</c> and <c>lv</c> must all be exactly four long — a folder cannot describe three
     /// difficulties, and a gap in the middle has nowhere to be written.
     /// </remarks>
     internal sealed class ChartInfo
@@ -30,12 +30,22 @@ namespace InFalsusChartLoader
         internal string Composer;
 
         /// <summary>
-        /// Illustrator. Goes to two places, and neither of them is `SongInfo`'s own override fields:
-        /// the per-difficulty `SongChartInfo.DisplayJacketDesigner` (what the record carries) and
-        /// `DynamicStringMapping.jacketIllustratorNameTypeMapping` at `+0x78` (what the card reads).
-        /// It is a separate table from the artist's, keyed by the same `SongId`.
+        /// Illustrators, one per difficulty, or null when the `if` file names none.
+        ///
+        /// Optional since the v3 format: the game shows an illustrator per <b>song</b> (the
+        /// `JacketIllustratorName` lookup is keyed by `SongId`), so an author who does not care about
+        /// it can leave it out — and "left out" is written as empty strings rather than not written
+        /// at all, because the game's own two answers to a missing entry differ in a way the author
+        /// would see: an entry that is absent reads the literal `Missing String Mapping`, while an
+        /// entry that is empty takes the game's own empty-value path, where the illustrator element
+        /// is hidden (`SongTransitionLayer._GA` tests the string's length before it shows anything).
+        ///
+        /// The list exists because the `if` file may carry one per difficulty, the way `jacket` and
+        /// `charter` do. Per-difficulty values are written where per-difficulty values go — the
+        /// `SongChartInfo.DisplayJacketDesigner` of each record — and the one string the game can
+        /// show is kept in step with the difficulty the game is applying (see `SongCatalog`).
         /// </summary>
-        internal string Illust;
+        internal string[] Illustrators;
 
         /// <summary>Absolute path of the audio file.</summary>
         internal string SongPath;
@@ -48,7 +58,21 @@ namespace InFalsusChartLoader
         /// catalogue builds one material per distinct path, so four entries pointing at one picture
         /// are four references to one texture.
         /// </summary>
-        internal string[] PicturePaths;
+        internal string[] JacketPaths;
+
+        /// <summary>
+        /// Absolute paths of the four in-play backgrounds, in difficulty order — or null when the
+        /// `if` file names none, which is the ordinary case and means "the game's own background".
+        ///
+        /// A background is a still or a clip: `.png` is decoded into a material the same way a jacket
+        /// is, and `.mp4` is played into a render texture the material shows (see
+        /// <see cref="VideoBackground"/>). Which one an entry is comes from its extension, and the
+        /// reader has already refused everything that is neither.
+        ///
+        /// This replaced the older behaviour where the jacket doubled as the in-play background: an
+        /// author who wants the jacket there too now says so by naming it again.
+        /// </summary>
+        internal string[] BackgroundPaths;
 
         /// <summary>
         /// The window the song-select previews, in seconds.
@@ -77,8 +101,8 @@ namespace InFalsusChartLoader
         /// </summary>
         internal string[] ChartNames;
 
-        /// <summary>Chart designer per difficulty.</summary>
-        internal string[] Charter;
+        /// <summary>Chart designer per difficulty, as the `if` file's <c>charter</c> lists them.</summary>
+        internal string[] Charters;
 
         /// <summary>Difficulty rating per difficulty, as the game's own ratings are: small integers.</summary>
         internal int[] Level;

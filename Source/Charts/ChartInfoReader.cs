@@ -16,9 +16,9 @@ namespace InFalsusChartLoader
     /// </para>
     /// <para>
     /// The rules come from <c>Charts.EXAMPLE/READ</c>: the three arrays must be exactly four long,
-    /// no field may be missing, and the audio and image formats are restricted to what the game
-    /// itself can decode. On top of those, a referenced file that is not there is a rejection — a
-    /// name in the file is a claim about the disk, and the disk is what decides.
+    /// and the audio and image formats are restricted to what the game itself can decode. On top of
+    /// those, a referenced file that is not there is a rejection — a name in the file is a claim
+    /// about the disk, and the disk is what decides.
     /// </para>
     /// <para>
     /// Two fields are newer than that document and are described in <c>IF_FORMAT_V2.md</c>:
@@ -29,7 +29,19 @@ namespace InFalsusChartLoader
     /// its author did not set, is a defect the author cannot see — and neither default was ever a
     /// decision anybody made, only one nobody noticed. Leaving either out is a rejection, and the
     /// reason names the field.
-    /// <c>picture</c> additionally accepts the older single-name form.
+    /// </para>
+    /// <para>
+    /// The v3 format is described in <c>IF_FORMAT_V3.md</c> and makes four changes here: the jacket
+    /// key is <c>jacket</c> and the chart designers' key is <c>charter</c>; <c>illust</c> and
+    /// <c>background</c> are <b>optional</b> — the two fields whose absence is an answer rather than
+    /// a rejection, because neither is a claim about a file that has to exist for the song to be
+    /// playable: the game draws its own background and hides its own illustrator element, and in both
+    /// cases "the author wrote nothing" is what makes that happen. Both take one name or four, and
+    /// <c>background</c> takes a still or a clip.
+    /// </para>
+    /// <para>
+    /// A single string still counts as four copies of itself wherever one name or four is accepted —
+    /// the jacket's older form, kept because it is what most folders want.
     /// </para>
     /// <para>
     /// Every reason assignment is inside <c>#if DEBUG</c>. That looks like clutter and is not: the
@@ -62,6 +74,18 @@ namespace InFalsusChartLoader
         /// the branch that applies. Accepting `.jpg` here would be accepting a file nothing can draw.
         /// </summary>
         private static readonly string[] ImageExtensions = { ".png" };
+
+        /// <summary>
+        /// What an in-play background may be: a still, or a clip.
+        ///
+        /// The still goes through the same decoder a jacket does. The clip is played by the game's
+        /// own video module — `UnityEngine.Video.VideoPlayer`, present in this build's metadata and
+        /// already used by the game itself (`C2DVideoPlayer`, `GenericMeshVideoPlayer`) — into a
+        /// render texture the background material shows. MP4 is the container Unity's Windows player
+        /// decodes through the OS codecs; whether a given file plays is the platform's answer, which
+        /// is why the player's state is reported in the probe rather than assumed.
+        /// </summary>
+        private static readonly string[] BackgroundExtensions = { ".png", ".mp4" };
 
         /// <summary>The file that carries a folder's metadata. Lower case, and matched as written.</summary>
         internal const string InfoFileName = "if";
@@ -127,16 +151,25 @@ namespace InFalsusChartLoader
 
             if (!Text(root, "name", out built.Name, out reason)) return false;
             if (!Text(root, "composer", out built.Composer, out reason)) return false;
-            if (!Text(root, "illust", out built.Illust, out reason)) return false;
+
+            // Optional since v3: an author who names no illustrator gets the game's own empty-value
+            // path, where the element that would show one is hidden. See `Illustrators` for why that
+            // and not "leave the table alone".
+            if (!Illustrators(root, out built.Illustrators, out reason)) return false;
 
             // `song` names a file in this folder and it must be there: an `if` that points at nothing
             // describes a song that cannot be played.
             if (!LocalFile(root, folder, "song", AudioExtensions, out built.SongPath, out reason)) return false;
 
-            if (!Pictures(root, folder, out built.PicturePaths, out reason)) return false;
+            if (!Jackets(root, folder, out built.JacketPaths, out reason)) return false;
+
+            // Optional, and absent means "the game's own background": the parameter is the only thing
+            // that ever replaces it, so an author who writes nothing keeps whatever the game draws.
+            if (!Backgrounds(root, folder, out built.BackgroundPaths, out reason)) return false;
+
             if (!Preview(root, out built.PreviewStart, out built.PreviewEnd, out reason)) return false;
 
-            if (!Texts(root, "Charter", out built.Charter, out reason)) return false;
+            if (!Texts(root, "charter", out built.Charters, out reason)) return false;
             if (!Levels(root, "lv", out built.Level, out reason)) return false;
             if (!ChartFiles(root, folder, out built.ChartPaths, out built.ChartNames, out reason)) return false;
 
@@ -238,30 +271,54 @@ namespace InFalsusChartLoader
         }
 
         /// <summary>
-        /// The jacket images: one file per difficulty.
+        /// The jacket images: one file per difficulty, under the key <c>jacket</c>.
         ///
         /// A single string counts as four copies of itself. That is the shape the previous format
         /// had, and it is still what most folders want — one picture for a whole song — so refusing
         /// it would break every `if` file written before the list existed for no gain. Four entries
         /// is the general case, and lets a difficulty look unlike its neighbours.
         /// </summary>
-        private static bool Pictures(JObject root, string folder, out string[] paths, out string reason)
+        private static bool Jackets(JObject root, string folder, out string[] paths, out string reason) =>
+            OneOrFour(root, folder, "jacket", ImageExtensions, out paths, out reason);
+
+        /// <summary>
+        /// The in-play backgrounds: one file per difficulty, under the key <c>background</c>, each a
+        /// still or a clip. Optional — the only field whose absence is an answer rather than a
+        /// rejection, because "no background of my own" is an ordinary song.
+        /// </summary>
+        private static bool Backgrounds(JObject root, string folder, out string[] paths, out string reason)
         {
             paths = null;
             reason = null;
 
-            JToken token = root["picture"];
+            JToken token = root["background"];
+            if (token == null || token.Type == JTokenType.Null) return true;   // absent: the game's own
+
+            return OneOrFour(root, folder, "background", BackgroundExtensions, out paths, out reason);
+        }
+
+        /// <summary>
+        /// A field that is one name or four names, each naming a file in the folder. Shared by the
+        /// jackets and the backgrounds, which differ only in key and in what a name may end with.
+        /// </summary>
+        private static bool OneOrFour(JObject root, string folder, string key, string[] allowed,
+                                      out string[] paths, out string reason)
+        {
+            paths = null;
+            reason = null;
+
+            JToken token = root[key];
             if (token == null || token.Type == JTokenType.Null)
             {
 #if DEBUG
-                reason = "\"picture\" is missing";
+                reason = $"\"{key}\" is missing";
 #endif
                 return false;
             }
 
             if (token.Type == JTokenType.String)
             {
-                if (!LocalFile(root, folder, "picture", ImageExtensions, out string single, out reason)) return false;
+                if (!LocalFile(root, folder, key, allowed, out string single, out reason)) return false;
 
                 var same = new string[ChartInfo.Difficulties];
                 for (int i = 0; i < same.Length; i++) same[i] = single;
@@ -272,7 +329,7 @@ namespace InFalsusChartLoader
             if (token.Type != JTokenType.Array)
             {
 #if DEBUG
-                reason = "\"picture\" is neither a name nor a list of names";
+                reason = $"\"{key}\" is neither a name nor a list of names";
 #endif
                 return false;
             }
@@ -281,7 +338,7 @@ namespace InFalsusChartLoader
             if (array.Count != ChartInfo.Difficulties)
             {
 #if DEBUG
-                reason = $"\"picture\" has {array.Count} entries, not {ChartInfo.Difficulties}";
+                reason = $"\"{key}\" has {array.Count} entries, not {ChartInfo.Difficulties}";
 #endif
                 return false;
             }
@@ -293,16 +350,82 @@ namespace InFalsusChartLoader
                 if (item.Type != JTokenType.String || string.IsNullOrWhiteSpace(item.Value<string>()))
                 {
 #if DEBUG
-                    reason = $"\"picture\"[{i}] is not a name";
+                    reason = $"\"{key}\"[{i}] is not a name";
 #endif
                     return false;
                 }
 
-                if (!LocalFileAt(folder, "picture", item.Value<string>(), ImageExtensions,
-                                 out result[i], out reason)) return false;
+                if (!LocalFileAt(folder, key, item.Value<string>(), allowed, out result[i], out reason))
+                    return false;
             }
 
             paths = result;
+            return true;
+        }
+
+        /// <summary>
+        /// The illustrators: one name, four names, or nothing at all.
+        ///
+        /// Nothing at all is not a rejection — see <see cref="ChartInfo.Illustrators"/> — so the only
+        /// ways to fail are the ones a written value can fail in: a wrong type, a wrong length, or an
+        /// entry that is not a name.
+        /// </summary>
+        private static bool Illustrators(JObject root, out string[] names, out string reason)
+        {
+            names = null;
+            reason = null;
+
+            JToken token = root["illust"];
+            if (token == null || token.Type == JTokenType.Null) return true;   // absent: the game's own
+
+            if (token.Type == JTokenType.String)
+            {
+                string single = token.Value<string>();
+                if (string.IsNullOrWhiteSpace(single))
+                {
+#if DEBUG
+                    reason = "\"illust\" is empty";
+#endif
+                    return false;
+                }
+
+                names = new string[ChartInfo.Difficulties];
+                for (int i = 0; i < names.Length; i++) names[i] = single;
+                return true;
+            }
+
+            if (token.Type != JTokenType.Array)
+            {
+#if DEBUG
+                reason = "\"illust\" is neither a name nor a list of names";
+#endif
+                return false;
+            }
+
+            var array = (JArray)token;
+            if (array.Count != ChartInfo.Difficulties)
+            {
+#if DEBUG
+                reason = $"\"illust\" has {array.Count} entries, not {ChartInfo.Difficulties}";
+#endif
+                return false;
+            }
+
+            var result = new string[ChartInfo.Difficulties];
+            for (int i = 0; i < result.Length; i++)
+            {
+                JToken item = array[i];
+                if (item.Type != JTokenType.String || string.IsNullOrWhiteSpace(item.Value<string>()))
+                {
+#if DEBUG
+                    reason = $"\"illust\"[{i}] is not a name";
+#endif
+                    return false;
+                }
+                result[i] = item.Value<string>();
+            }
+
+            names = result;
             return true;
         }
 
